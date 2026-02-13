@@ -1,43 +1,72 @@
-#ifndef EMBEDDED_CLI
-#define EMBEDDED_CLI
+#ifndef __XF_CLI_H__
+#define __XF_CLI_H__
 
 #include <stdbool.h>
 
-#ifndef EMBEDDED_CLI_MAX_LINE
+#ifndef XF_CLI_MAX_LINE
 /**
  * Maximum number of bytes to accept in a single line
  */
-#define EMBEDDED_CLI_MAX_LINE 120
+#define XF_CLI_MAX_LINE 120
 #endif
 
-#ifndef EMBEDDED_CLI_HISTORY_LEN
+#ifndef XF_CLI_HISTORY_LEN
 /**
  * Maximum number of bytes to retain of history data
  * Define this to 0 to remove history support
  */
-#define EMBEDDED_CLI_HISTORY_LEN 1000
+#define XF_CLI_HISTORY_LEN 1000
 #endif
 
-#ifndef EMBEDDED_CLI_MAX_ARGC
+#ifndef XF_CLI_MAX_ARGC
 /**
  * What is the maximum number of arguments we reserve space for
  */
-#define EMBEDDED_CLI_MAX_ARGC 16
+#define XF_CLI_MAX_ARGC 16
 #endif
 
-#ifndef EMBEDDED_CLI_MAX_PROMPT_LEN
+#ifndef XF_CLI_MAX_PROMPT_LEN
 /**
  * Maximum number of bytes in the prompt
  */
-#define EMBEDDED_CLI_MAX_PROMPT_LEN 10
+#define XF_CLI_MAX_PROMPT_LEN 10
 #endif
 
-#ifndef EMBEDDED_CLI_SERIAL_XLATE
+#ifndef XF_CLI_SERIAL_XLATE
 /**
  * Translate CR -> NL on input and output CR NL on output. This allows
  * "natural" processing when using a serial terminal.
  */
-#define EMBEDDED_CLI_SERIAL_XLATE 1
+#define XF_CLI_SERIAL_XLATE 1
+#endif
+
+#ifndef XF_CLI_COLORFUL
+/**
+ * Enable ANSI colorful output for prompt/command.
+ * 0: disabled, 1: enabled
+ */
+#define XF_CLI_COLORFUL 1
+#endif
+
+#ifndef XF_CLI_PROMPT_COLOR
+/**
+ * Prompt color sequence, default red.
+ */
+#define XF_CLI_PROMPT_COLOR "\x1b[31m"
+#endif
+
+#ifndef XF_CLI_COMMAND_COLOR
+/**
+ * Command input color sequence, default green.
+ */
+#define XF_CLI_COMMAND_COLOR "\x1b[32m"
+#endif
+
+#ifndef XF_CLI_COLOR_RESET
+/**
+ * ANSI reset color sequence.
+ */
+#define XF_CLI_COLOR_RESET "\x1b[0m"
 #endif
 
 /**
@@ -47,18 +76,18 @@
  * interact with it. It is exposed here to make it easier to use as a static
  * structure, but all elements of the structure should be considered private
  */
-struct embedded_cli {
+struct xf_cli {
     /**
      * Internal buffer. This should not be accessed directly, use the
      * access functions below
      */
-    char buffer[EMBEDDED_CLI_MAX_LINE];
+    char buffer[XF_CLI_MAX_LINE];
 
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
     /**
      * List of history entries
      */
-    char history[EMBEDDED_CLI_HISTORY_LEN];
+    char history[XF_CLI_HISTORY_LEN];
 
     /**
      * Are we searching through the history?
@@ -106,43 +135,43 @@ struct embedded_cli {
      */
     int counter;
 
-    char *argv[EMBEDDED_CLI_MAX_ARGC];
+    char *argv[XF_CLI_MAX_ARGC];
 
-    char prompt[EMBEDDED_CLI_MAX_PROMPT_LEN];
+    char prompt[XF_CLI_MAX_PROMPT_LEN];
 };
 
 /**
- * Start up the Embedded CLI subsystem. This should only be called once.
+ * Start up the XF CLI subsystem. This should only be called once.
  */
-void embedded_cli_init(struct embedded_cli *, const char *prompt,
-                       void (*put_char)(void *data, char ch, bool is_last),
-                       void *cb_data);
+void xf_cli_init(struct xf_cli *, const char *prompt,
+                 void (*put_char)(void *data, char ch, bool is_last),
+                 void *cb_data);
 
 /**
  * Adds a new character into the buffer. Returns true if
  * the buffer should now be processed
  * Note: This function should not be called from an interrupt handler.
  */
-bool embedded_cli_insert_char(struct embedded_cli *cli, char ch);
+bool xf_cli_insert_char(struct xf_cli *cli, char ch);
 
 /**
  * Returns the nul terminated internal buffer. This will
  * return NULL if the buffer is not yet complete
  */
-const char *embedded_cli_get_line(const struct embedded_cli *cli);
+const char *xf_cli_get_line(const struct xf_cli *cli);
 
 /**
  * Parses the internal buffer and returns it as an argc/argc combo
- * @return number of values in argv (maximum of EMBEDDED_CLI_MAX_ARGC)
+ * @return number of values in argv (maximum of XF_CLI_MAX_ARGC)
  */
-int embedded_cli_argc(struct embedded_cli *cli, char ***argv);
+int xf_cli_argc(struct xf_cli *cli, char ***argv);
 
 /**
  * Outputs the CLI prompt
- * This should be called after @ref embedded_cli_argc or @ref
- * embedded_cli_get_line has been called and the command fully processed
+ * This should be called after @ref xf_cli_argc or @ref
+ * xf_cli_get_line has been called and the command fully processed
  */
-void embedded_cli_prompt(struct embedded_cli *cli);
+void xf_cli_prompt(struct xf_cli *cli);
 
 /**
  * Retrieve a history command line
@@ -150,7 +179,7 @@ void embedded_cli_prompt(struct embedded_cli *cli);
  * etc...
  * @return NULL if the history buffer is exceeded
  */
-const char *embedded_cli_get_history(struct embedded_cli *cli,
-                                     int history_pos);
+const char *xf_cli_get_history(struct xf_cli *cli,
+                               int history_pos);
 
-#endif
+#endif /* __XF_CLI_H__ */

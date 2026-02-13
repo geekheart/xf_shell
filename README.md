@@ -23,9 +23,24 @@ xmake r
 ## 如何移植?
 
 ### 所需文件
-1. [Embedded CLI](https://github.com/AndreRenaud/EmbeddedCLI):`EmbeddedCLI/embedded_cli.c`, `EmbeddedCLI/embedded_cli.h`
-2. 命令解析器:`xf_options/xf_options.c`, `xf_options/xf_options.c`
-3. `src/xf_cmd_list.h`,`src/xf_console.h`,`src/xf_console.c`
+1. CLI 内核(基于 Embedded CLI 二次封装):`src/xf_cli.c`, `src/xf_cli.h`
+2. 命令解析器:`src/xf_options.c`, `src/xf_options.h`
+3. `src/xf_cmd_list.h`,`src/xf_console.h`,`src/xf_console.c`（已内置 Tab 补全）
+
+## 高级功能（已集成）
+
+- `Tab` 补全命令名
+- `Tab` 补全选项（`--long-opt` 与 `-s`）
+- 多候选时输出建议列表并重绘当前输入行
+
+## 颜色输出宏
+
+在 `src/xf_cli.h` 中可配置：
+
+- `XF_CLI_COLORFUL`: `0/1`，是否启用 ANSI 彩色
+- `XF_CLI_PROMPT_COLOR`: 提示符颜色（默认红色）
+- `XF_CLI_COMMAND_COLOR`: 命令输入颜色（默认绿色）
+- `XF_CLI_COLOR_RESET`: 颜色复位
 
 ### 对接输入输出
 

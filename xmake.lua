@@ -3,10 +3,8 @@ add_rules("mode.debug", "mode.release")
 target("shell")
     set_kind("binary")
     add_files("src/*.c")
-    add_files("EmbeddedCLI/embedded_cli.c")
-    add_files("xf_options/xf_options.c")
-    add_includedirs("EmbeddedCLI")
-    add_includedirs("xf_options")
+    add_files("example/*.c")
+    add_includedirs("src", "example")
 
 --
 -- If you want to known more usage about xmake, please see https://xmake.io
@@ -76,4 +74,3 @@ target("shell")
 --
 -- @endcode
 --
-

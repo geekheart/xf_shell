@@ -7,17 +7,17 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "embedded_cli.h"
+#include "xf_cli.h"
 
 #define CTRL_R 0x12
 
 #define CLEAR_EOL "\x1b[0K"
 #define MOVE_BOL "\x1b[1G"
 
-static void cli_putchar(struct embedded_cli *cli, char ch, bool is_last)
+static void cli_putchar(struct xf_cli *cli, char ch, bool is_last)
 {
     if (cli->put_char) {
-#if EMBEDDED_CLI_SERIAL_XLATE
+#if XF_CLI_SERIAL_XLATE
         if (ch == '\n')
             cli->put_char(cli->cb_data, '\r', false);
 #endif
@@ -25,25 +25,55 @@ static void cli_putchar(struct embedded_cli *cli, char ch, bool is_last)
     }
 }
 
-static void cli_puts(struct embedded_cli *cli, const char *s)
+static void cli_puts(struct xf_cli *cli, const char *s)
 {
     for (; *s; s++)
         cli_putchar(cli, *s, s[1] == '\0');
 }
 
-static void embedded_cli_reset_line(struct embedded_cli *cli)
+static void cli_set_command_color(struct xf_cli *cli)
+{
+#if XF_CLI_COLORFUL
+    cli_puts(cli, XF_CLI_COMMAND_COLOR);
+#else
+    (void)cli;
+#endif
+}
+
+static void cli_reset_color(struct xf_cli *cli)
+{
+#if XF_CLI_COLORFUL
+    cli_puts(cli, XF_CLI_COLOR_RESET);
+#else
+    (void)cli;
+#endif
+}
+
+static void cli_put_prompt(struct xf_cli *cli)
+{
+#if XF_CLI_COLORFUL
+    cli_puts(cli, XF_CLI_PROMPT_COLOR);
+    cli_puts(cli, cli->prompt);
+    cli_reset_color(cli);
+    cli_set_command_color(cli);
+#else
+    cli_puts(cli, cli->prompt);
+#endif
+}
+
+static void xf_cli_reset_line(struct xf_cli *cli)
 {
     cli->len = 0;
     cli->cursor = 0;
     cli->counter = 0;
     cli->have_csi = cli->have_escape = false;
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
     cli->history_pos = -1;
     cli->searching = false;
 #endif
 }
 
-void embedded_cli_init(struct embedded_cli *cli, const char *prompt,
+void xf_cli_init(struct xf_cli *cli, const char *prompt,
                        void (*put_char)(void *data, char ch, bool is_last),
                        void *cb_data)
 {
@@ -55,16 +85,16 @@ void embedded_cli_init(struct embedded_cli *cli, const char *prompt,
         cli->prompt[sizeof(cli->prompt) - 1] = '\0';
     }
 
-    embedded_cli_reset_line(cli);
+    xf_cli_reset_line(cli);
 }
 
-static void cli_ansi(struct embedded_cli *cli, int n, char code)
+static void cli_ansi(struct xf_cli *cli, int n, char code)
 {
     char buffer[5] = {'\x1b', '[', '0' + (n % 10), code, '\0'};
     cli_puts(cli, buffer);
 }
 
-static void term_cursor_back(struct embedded_cli *cli, int n)
+static void term_cursor_back(struct xf_cli *cli, int n)
 {
     while (n > 0) {
         int count = n > 9 ? 9 : n;
@@ -73,7 +103,7 @@ static void term_cursor_back(struct embedded_cli *cli, int n)
     }
 }
 
-static void term_cursor_fwd(struct embedded_cli *cli, int n)
+static void term_cursor_fwd(struct xf_cli *cli, int n)
 {
     while (n > 0) {
         int count = n > 9 ? 9 : n;
@@ -82,18 +112,18 @@ static void term_cursor_fwd(struct embedded_cli *cli, int n)
     }
 }
 
-#if EMBEDDED_CLI_HISTORY_LEN
-static void term_backspace(struct embedded_cli *cli, int n)
+#if XF_CLI_HISTORY_LEN
+static void term_backspace(struct xf_cli *cli, int n)
 {
     // printf("backspace %d ('%s': %d)\n", n, cli->buffer, cli->done);
     while (n--)
         cli_putchar(cli, '\b', n == 0);
 }
 
-static const char *embedded_cli_get_history_search(struct embedded_cli *cli)
+static const char *xf_cli_get_history_search(struct xf_cli *cli)
 {
     for (int i = 0;; i++) {
-        const char *h = embedded_cli_get_history(cli, i);
+        const char *h = xf_cli_get_history(cli, i);
         if (!h)
             return NULL;
         if (strstr(h, cli->buffer))
@@ -103,7 +133,7 @@ static const char *embedded_cli_get_history_search(struct embedded_cli *cli)
 }
 #endif
 
-static void embedded_cli_insert_default_char(struct embedded_cli *cli,
+static void xf_cli_insert_default_char(struct xf_cli *cli,
                                              char ch)
 {
     // If the buffer is full, there's nothing we can do
@@ -117,10 +147,10 @@ static void embedded_cli_insert_default_char(struct embedded_cli *cli,
     cli->buffer[cli->len] = '\0';
     cli->cursor++;
 
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
     if (cli->searching) {
         cli_puts(cli, MOVE_BOL CLEAR_EOL "search:");
-        const char *h = embedded_cli_get_history_search(cli);
+        const char *h = xf_cli_get_history_search(cli);
         if (h)
             cli_puts(cli, h);
 
@@ -132,10 +162,10 @@ static void embedded_cli_insert_default_char(struct embedded_cli *cli,
     }
 }
 
-const char *embedded_cli_get_history(struct embedded_cli *cli,
+const char *xf_cli_get_history(struct xf_cli *cli,
                                      int history_pos)
 {
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
     int pos = 0;
 
     if (history_pos < 0)
@@ -159,8 +189,8 @@ const char *embedded_cli_get_history(struct embedded_cli *cli,
 #endif
 }
 
-#if EMBEDDED_CLI_HISTORY_LEN
-static void embedded_cli_extend_history(struct embedded_cli *cli)
+#if XF_CLI_HISTORY_LEN
+static void xf_cli_extend_history(struct xf_cli *cli)
 {
     int len = strlen(cli->buffer);
     if (len > 0) {
@@ -176,9 +206,9 @@ static void embedded_cli_extend_history(struct embedded_cli *cli)
     }
 }
 
-static void embedded_cli_stop_search(struct embedded_cli *cli, bool print)
+static void xf_cli_stop_search(struct xf_cli *cli, bool print)
 {
-    const char *h = embedded_cli_get_history_search(cli);
+    const char *h = xf_cli_get_history_search(cli);
     if (h) {
         strncpy(cli->buffer, h, sizeof(cli->buffer));
         cli->buffer[sizeof(cli->buffer) - 1] = '\0';
@@ -188,13 +218,13 @@ static void embedded_cli_stop_search(struct embedded_cli *cli, bool print)
     cli->searching = false;
     if (print) {
         cli_puts(cli, MOVE_BOL CLEAR_EOL);
-        cli_puts(cli, cli->prompt);
+        cli_put_prompt(cli);
         cli_puts(cli, cli->buffer);
     }
 }
 #endif
 
-bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
+bool xf_cli_insert_char(struct xf_cli *cli, char ch)
 {
     // If we're inserting a character just after a finished line, clear things
     // up
@@ -212,11 +242,11 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
                 cli->counter = 1;
             switch (ch) {
             case 'A': { // up arrow
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
                 // Backspace over our current line
                 term_backspace(cli, cli->done ? 0 : cli->cursor);
                 const char *line =
-                    embedded_cli_get_history(cli, cli->history_pos + 1);
+                    xf_cli_get_history(cli, cli->history_pos + 1);
                 if (line) {
                     int len = strlen(line);
                     cli->history_pos++;
@@ -232,7 +262,7 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
                     int tmp = cli->history_pos; // We don't want to wrap this
                                                 // history, so retain it
                     cli->buffer[0] = '\0';
-                    embedded_cli_reset_line(cli);
+                    xf_cli_reset_line(cli);
                     cli->history_pos = tmp;
                     cli_puts(cli, CLEAR_EOL);
                 }
@@ -241,10 +271,10 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
             }
 
             case 'B': { // down arrow
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
                 term_backspace(cli, cli->done ? 0 : cli->cursor);
                 const char *line =
-                    embedded_cli_get_history(cli, cli->history_pos - 1);
+                    xf_cli_get_history(cli, cli->history_pos - 1);
                 if (line) {
                     int len = strlen(line);
                     cli->history_pos--;
@@ -258,7 +288,7 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
                     cli_puts(cli, CLEAR_EOL);
                 } else {
                     cli->buffer[0] = '\0';
-                    embedded_cli_reset_line(cli);
+                    xf_cli_reset_line(cli);
                     cli_puts(cli, CLEAR_EOL);
                 }
 #endif
@@ -316,9 +346,10 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
             cli->cursor = 0;
             break;
         case '\x03':
+            cli_reset_color(cli);
             cli_puts(cli, "^C\n");
-            cli_puts(cli, cli->prompt);
-            embedded_cli_reset_line(cli);
+            cli_put_prompt(cli);
+            xf_cli_reset_line(cli);
             cli->buffer[0] = '\0';
             break;
         case '\x05': // Ctrl-E
@@ -332,16 +363,16 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
             break;
         case '\x0c': // Ctrl-L
             cli_puts(cli, MOVE_BOL CLEAR_EOL);
-            cli_puts(cli, cli->prompt);
+            cli_put_prompt(cli);
             cli_puts(cli, cli->buffer);
             term_cursor_back(cli, cli->len - cli->cursor);
             break;
         case '\b': // Backspace
         case 0x7f: // backspace?
                    // printf("backspace %d\n", cli->cursor);
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
             if (cli->searching)
-                embedded_cli_stop_search(cli, true);
+                xf_cli_stop_search(cli, true);
 #endif
             if (cli->cursor > 0) {
                 memmove(&cli->buffer[cli->cursor - 1],
@@ -356,7 +387,7 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
             }
             break;
         case CTRL_R:
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
             if (!cli->searching) {
                 cli_puts(cli, "\nsearch:");
                 cli->searching = true;
@@ -364,9 +395,9 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
 #endif
             break;
         case '\x1b':
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
             if (cli->searching)
-                embedded_cli_stop_search(cli, true);
+                xf_cli_stop_search(cli, true);
 #endif
             cli->have_csi = false;
             cli->have_escape = true;
@@ -376,36 +407,37 @@ bool embedded_cli_insert_char(struct embedded_cli *cli, char ch)
             if (cli->have_escape)
                 cli->have_csi = true;
             else
-                embedded_cli_insert_default_char(cli, ch);
+                xf_cli_insert_default_char(cli, ch);
             break;
-#if EMBEDDED_CLI_SERIAL_XLATE
+#if XF_CLI_SERIAL_XLATE
         case '\r':
             ch = '\n'; // So cli->done will exit
 #endif
             // fallthrough
         case '\n':
+            cli_reset_color(cli);
             cli_putchar(cli, '\n', true);
             break;
         default:
             if (ch > 0)
-                embedded_cli_insert_default_char(cli, ch);
+                xf_cli_insert_default_char(cli, ch);
         }
     }
     cli->done = (ch == '\n');
 
     if (cli->done) {
-#if EMBEDDED_CLI_HISTORY_LEN
+#if XF_CLI_HISTORY_LEN
         if (cli->searching)
-            embedded_cli_stop_search(cli, false);
-        embedded_cli_extend_history(cli);
+            xf_cli_stop_search(cli, false);
+        xf_cli_extend_history(cli);
 #endif
-        embedded_cli_reset_line(cli);
+        xf_cli_reset_line(cli);
     }
     // printf("Done with char 0x%x (done=%d)\n", ch, cli->done);
     return cli->done;
 }
 
-const char *embedded_cli_get_line(const struct embedded_cli *cli)
+const char *xf_cli_get_line(const struct xf_cli *cli)
 {
     if (!cli->done)
         return NULL;
@@ -417,7 +449,7 @@ static bool is_whitespace(char ch)
     return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r');
 }
 
-int embedded_cli_argc(struct embedded_cli *cli, char ***argv)
+int xf_cli_argc(struct xf_cli *cli, char ***argv)
 {
     int pos = 0;
     bool in_arg = false;
@@ -455,7 +487,7 @@ int embedded_cli_argc(struct embedded_cli *cli, char ***argv)
         }
 
         if (!in_arg) {
-            if (pos >= EMBEDDED_CLI_MAX_ARGC) {
+            if (pos >= XF_CLI_MAX_ARGC) {
                 break;
             }
             cli->argv[pos] = &cli->buffer[i];
@@ -481,7 +513,7 @@ int embedded_cli_argc(struct embedded_cli *cli, char ***argv)
         }
     }
     // Traditionally, there is a NULL entry at argv[argc].
-    if (pos >= EMBEDDED_CLI_MAX_ARGC) {
+    if (pos >= XF_CLI_MAX_ARGC) {
         pos--;
     }
     cli->argv[pos] = NULL;
@@ -490,7 +522,7 @@ int embedded_cli_argc(struct embedded_cli *cli, char ***argv)
     return pos;
 }
 
-void embedded_cli_prompt(struct embedded_cli *cli)
+void xf_cli_prompt(struct xf_cli *cli)
 {
-    cli_puts(cli, cli->prompt);
+    cli_put_prompt(cli);
 }

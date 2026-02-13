@@ -1,4 +1,0 @@
-*.o
-embedded_cli_test
-embedded_cli_fuzzer
-examples/posix_demo
