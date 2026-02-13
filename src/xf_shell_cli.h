@@ -1,5 +1,5 @@
-#ifndef __XF_CLI_H__
-#define __XF_CLI_H__
+#ifndef __XF_SHELL_CLI_H__
+#define __XF_SHELL_CLI_H__
 
 #include <stdbool.h>
 
@@ -29,7 +29,7 @@
 /**
  * Maximum number of bytes in the prompt
  */
-#define XF_CLI_MAX_PROMPT_LEN 10
+#define XF_CLI_MAX_PROMPT_LEN 15
 #endif
 
 #ifndef XF_CLI_SERIAL_XLATE
@@ -141,45 +141,83 @@ struct xf_cli {
 };
 
 /**
- * Start up the XF CLI subsystem. This should only be called once.
+ * @brief 初始化 CLI 核心状态对象。
+ *
+ * @details
+ * 该函数会清空内部缓冲区、初始化光标与历史相关状态，并绑定输出回调。
+ * 同一个 `struct xf_cli` 实例通常只需初始化一次。
+ *
+ * @param[in,out] cli CLI 状态对象。
+ * @param[in] prompt 提示符字符串（会复制到内部缓存）。
+ * @param[in] put_char 单字符输出回调。
+ * @param[in] cb_data 回调透传上下文。
  */
 void xf_cli_init(struct xf_cli *, const char *prompt,
                  void (*put_char)(void *data, char ch, bool is_last),
                  void *cb_data);
 
 /**
- * Adds a new character into the buffer. Returns true if
- * the buffer should now be processed
- * Note: This function should not be called from an interrupt handler.
+ * @brief 向 CLI 输入缓冲插入一个字符并更新编辑状态。
+ *
+ * @details
+ * 支持普通字符输入、退格、回车、方向键序列等交互。
+ * 当返回 `true` 时表示当前行已完成，可触发命令解析与执行。
+ *
+ * @param[in,out] cli CLI 状态对象。
+ * @param[in] ch 输入字符。
+ *
+ * @return
+ * - `true`：一行命令已结束；
+ * - `false`：继续接收后续字符。
+ *
+ * @note 不建议在中断上下文中调用。
  */
 bool xf_cli_insert_char(struct xf_cli *cli, char ch);
 
 /**
- * Returns the nul terminated internal buffer. This will
- * return NULL if the buffer is not yet complete
+ * @brief 获取当前已完成命令行的内部字符串指针。
+ *
+ * @param[in] cli CLI 状态对象。
+ * @return
+ * - 非 `NULL`：指向以 `\0` 结尾的命令行文本；
+ * - `NULL`：当前尚未形成完整命令行。
  */
 const char *xf_cli_get_line(const struct xf_cli *cli);
 
 /**
- * Parses the internal buffer and returns it as an argc/argc combo
- * @return number of values in argv (maximum of XF_CLI_MAX_ARGC)
+ * @brief 将内部命令行按参数拆分为 `argc/argv` 形式。
+ *
+ * @details
+ * 拆分结果写入 `cli` 内部的 `argv` 数组，并通过 `argv` 输出指针返回。
+ *
+ * @param[in,out] cli CLI 状态对象。
+ * @param[out] argv 输出参数数组指针。
+ *
+ * @return 参数个数，最大不超过 `XF_CLI_MAX_ARGC`。
  */
 int xf_cli_argc(struct xf_cli *cli, char ***argv);
 
 /**
- * Outputs the CLI prompt
- * This should be called after @ref xf_cli_argc or @ref
- * xf_cli_get_line has been called and the command fully processed
+ * @brief 输出提示符并准备下一轮输入。
+ *
+ * @details
+ * 一般在命令处理完成后调用，使终端回到可输入状态。
+ *
+ * @param[in,out] cli CLI 状态对象。
  */
 void xf_cli_prompt(struct xf_cli *cli);
 
 /**
- * Retrieve a history command line
- * @param history_pos 0 is the most recent command, 1 is the one before that
- * etc...
- * @return NULL if the history buffer is exceeded
+ * @brief 按序号获取历史命令文本。
+ *
+ * @param[in,out] cli CLI 状态对象。
+ * @param[in] history_pos 历史偏移，`0` 表示最近一条，`1` 表示上一条。
+ *
+ * @return
+ * - 非 `NULL`：历史命令字符串；
+ * - `NULL`：越界或无可用历史记录。
  */
 const char *xf_cli_get_history(struct xf_cli *cli,
                                int history_pos);
 
-#endif /* __XF_CLI_H__ */
+#endif /* __XF_SHELL_CLI_H__ */

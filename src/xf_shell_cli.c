@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "xf_cli.h"
+#include "xf_shell_cli.h"
 
 #define CTRL_R 0x12
 
@@ -115,7 +115,6 @@ static void term_cursor_fwd(struct xf_cli *cli, int n)
 #if XF_CLI_HISTORY_LEN
 static void term_backspace(struct xf_cli *cli, int n)
 {
-    // printf("backspace %d ('%s': %d)\n", n, cli->buffer, cli->done);
     while (n--)
         cli_putchar(cli, '\b', n == 0);
 }
@@ -232,11 +231,9 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
         cli->buffer[0] = '\0';
         cli->done = false;
     }
-    // printf("Inserting char %d 0x%x '%c'\n", ch, ch, ch);
     if (cli->have_csi) {
         if (ch >= '0' && ch <= '9' && cli->counter < 100) {
             cli->counter = cli->counter * 10 + ch - '0';
-            // printf("cli->counter -> %d\n", cli->counter);
         } else {
             if (cli->counter == 0)
                 cli->counter = 1;
@@ -250,8 +247,6 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
                 if (line) {
                     int len = strlen(line);
                     cli->history_pos++;
-                    // printf("history up %d = '%s'\n", cli->history_pos,
-                    // line);
                     strncpy(cli->buffer, line, sizeof(cli->buffer));
                     cli->buffer[sizeof(cli->buffer) - 1] = '\0';
                     cli->len = len;
@@ -278,8 +273,6 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
                 if (line) {
                     int len = strlen(line);
                     cli->history_pos--;
-                    // printf("history down %d = '%s'\n",
-                    // cli->history_pos, line);
                     strncpy(cli->buffer, line, sizeof(cli->buffer));
                     cli->buffer[sizeof(cli->buffer) - 1] = '\0';
                     cli->len = len;
@@ -302,7 +295,6 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
                 }
                 break;
             case 'D':
-                // printf("back %d vs %d\n", cli->cursor, cli->counter);
                 if (cli->cursor >= cli->counter) {
                     cli->cursor -= cli->counter;
                     term_cursor_back(cli, cli->counter);
@@ -369,7 +361,6 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
             break;
         case '\b': // Backspace
         case 0x7f: // backspace?
-                   // printf("backspace %d\n", cli->cursor);
 #if XF_CLI_HISTORY_LEN
             if (cli->searching)
                 xf_cli_stop_search(cli, true);
