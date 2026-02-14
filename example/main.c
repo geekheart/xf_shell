@@ -17,6 +17,7 @@ static volatile sig_atomic_t s_should_exit = 0;
 static void handle_exit_signal(int signo) {
     (void)signo;
     s_should_exit = 1;
+    putc('\r', stdout);
 }
 
 static void setup_signal_handlers(void) {
