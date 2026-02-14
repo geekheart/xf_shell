@@ -35,6 +35,19 @@ extern "C" {
 #define XF_SHELL_MAX_MATCHES (XF_SHELL_MAX_COMMANDS + (XF_SHELL_MAX_OPTS_PER_CMD * 2))
 #endif
 
+#ifndef XF_SHELL_NEWLINE
+#if defined(_WIN32) || defined(_WIN64)
+#define XF_SHELL_NEWLINE "\r\n"
+#else
+#define XF_SHELL_NEWLINE "\n"
+#endif
+#endif
+
+#ifndef XF_SHELL_NEWLINE_IS_CRLF
+#define XF_SHELL_NEWLINE_IS_CRLF \
+    (XF_SHELL_NEWLINE[0] == '\r' && XF_SHELL_NEWLINE[1] == '\n' && XF_SHELL_NEWLINE[2] == '\0')
+#endif
+
 /* ==================== [Typedefs] ========================================== */
 
 typedef enum {

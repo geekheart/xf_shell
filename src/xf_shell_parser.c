@@ -696,7 +696,7 @@ static void print_arg_usage(cmd_arg_t* arg, const parser_output_t* out) {
 
     (void)count;
     out_puts(out, buffer);
-    out_puts(out, "\n");
+    out_puts(out, XF_SHELL_NEWLINE);
 }
 
 static void print_command_help(cmd_item_t* cmd, const parser_output_t* out) {
@@ -707,9 +707,9 @@ static void print_command_help(cmd_item_t* cmd, const parser_output_t* out) {
     }
 
     if (cmd->help != NULL && cmd->help[0] != '\0') {
-        snprintf(buffer, sizeof(buffer), "%s: %s\n", cmd->command, cmd->help);
+        snprintf(buffer, sizeof(buffer), "%s: %s" XF_SHELL_NEWLINE, cmd->command, cmd->help);
     } else {
-        snprintf(buffer, sizeof(buffer), "%s\n", cmd->command);
+        snprintf(buffer, sizeof(buffer), "%s" XF_SHELL_NEWLINE, cmd->command);
     }
     out_puts(out, buffer);
     print_command_args_usage(cmd, out);
@@ -748,9 +748,9 @@ static void print_option_error(cmd_opt_t* opt, const char* message, bool append_
     const char* msg = message;
 
     if (msg == NULL || msg[0] == '\0') {
-        snprintf(buffer, sizeof(buffer), "invalid value for --%s, expected %s\n\r", name, opt_expected_desc(opt->type));
+        snprintf(buffer, sizeof(buffer), "invalid value for --%s, expected %s" XF_SHELL_NEWLINE, name, opt_expected_desc(opt->type));
     } else {
-        snprintf(buffer, sizeof(buffer), "invalid value for --%s: %s\n\r", name, msg);
+        snprintf(buffer, sizeof(buffer), "invalid value for --%s: %s" XF_SHELL_NEWLINE, name, msg);
     }
 
     out_puts(out, buffer);
@@ -765,9 +765,9 @@ static void print_arg_error(cmd_arg_t* arg, const char* message, bool append_hel
     const char* msg = message;
 
     if (msg == NULL || msg[0] == '\0') {
-        snprintf(buffer, sizeof(buffer), "invalid value for argument <%s>, expected %s\n\r", name, opt_expected_desc(arg->type));
+        snprintf(buffer, sizeof(buffer), "invalid value for argument <%s>, expected %s" XF_SHELL_NEWLINE, name, opt_expected_desc(arg->type));
     } else {
-        snprintf(buffer, sizeof(buffer), "invalid argument <%s>: %s\n\r", name, msg);
+        snprintf(buffer, sizeof(buffer), "invalid argument <%s>: %s" XF_SHELL_NEWLINE, name, msg);
     }
 
     out_puts(out, buffer);
@@ -779,7 +779,7 @@ static void print_arg_error(cmd_arg_t* arg, const char* message, bool append_hel
 static void print_unknown_option_error(cmd_item_t* cmd, const char* token, bool append_help, const parser_output_t* out) {
     char buffer[256];
 
-    snprintf(buffer, sizeof(buffer), "unknown option: %s\n", token ? token : "(null)");
+    snprintf(buffer, sizeof(buffer), "unknown option: %s" XF_SHELL_NEWLINE, token ? token : "(null)");
     out_puts(out, buffer);
 
     if (append_help) {
@@ -790,7 +790,7 @@ static void print_unknown_option_error(cmd_item_t* cmd, const char* token, bool 
 static void print_unknown_arg_error(cmd_item_t* cmd, const char* token, bool append_help, const parser_output_t* out) {
     char buffer[256];
 
-    snprintf(buffer, sizeof(buffer), "unexpected argument: %s\n", token ? token : "(null)");
+    snprintf(buffer, sizeof(buffer), "unexpected argument: %s" XF_SHELL_NEWLINE, token ? token : "(null)");
     out_puts(out, buffer);
 
     if (append_help) {

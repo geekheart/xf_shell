@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "xf_shell.h"
 #include "xf_shell_cli.h"
 
 #define CTRL_R 0x12
@@ -18,7 +19,7 @@ static void cli_putchar(struct xf_cli *cli, char ch, bool is_last)
 {
     if (cli->put_char) {
 #if XF_CLI_SERIAL_XLATE
-        if (ch == '\n')
+        if (ch == '\n' && !XF_SHELL_NEWLINE_IS_CRLF)
             cli->put_char(cli->cb_data, '\r', false);
 #endif
         cli->put_char(cli->cb_data, ch, is_last);
@@ -339,7 +340,7 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
             break;
         case '\x03':
             cli_reset_color(cli);
-            cli_puts(cli, "^C\n");
+            cli_puts(cli, "^C" XF_SHELL_NEWLINE);
             cli_put_prompt(cli);
             xf_cli_reset_line(cli);
             cli->buffer[0] = '\0';
@@ -380,7 +381,7 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
         case CTRL_R:
 #if XF_CLI_HISTORY_LEN
             if (!cli->searching) {
-                cli_puts(cli, "\nsearch:");
+                cli_puts(cli, XF_SHELL_NEWLINE "search:");
                 cli->searching = true;
             }
 #endif
@@ -400,21 +401,21 @@ bool xf_cli_insert_char(struct xf_cli *cli, char ch)
             else
                 xf_cli_insert_default_char(cli, ch);
             break;
-#if XF_CLI_SERIAL_XLATE
         case '\r':
+#if XF_CLI_SERIAL_XLATE
             ch = '\n'; // So cli->done will exit
 #endif
             // fallthrough
         case '\n':
             cli_reset_color(cli);
-            cli_putchar(cli, '\n', true);
+            cli_puts(cli, XF_SHELL_NEWLINE);
             break;
         default:
             if (ch > 0)
                 xf_cli_insert_default_char(cli, ch);
         }
     }
-    cli->done = (ch == '\n');
+    cli->done = (ch == '\n' || ch == '\r');
 
     if (cli->done) {
 #if XF_CLI_HISTORY_LEN

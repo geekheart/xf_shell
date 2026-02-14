@@ -11,6 +11,7 @@
 
 /* ==================== [Includes] ========================================== */
 #include "xf_shell_options.h"
+#include "xf_shell.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -158,7 +159,7 @@ size_t xf_opt_parse_usage(xf_options_t *options, char *msg)
                          (options->type != XF_OPTION_TYPE_NONE
                           || options->description) ? " " : "");
     }
-    count += sprintf(msg + count, "\n");
+    count += sprintf(msg + count, XF_SHELL_NEWLINE);
 
     return count;
 }

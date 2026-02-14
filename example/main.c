@@ -103,10 +103,10 @@ static int test(const xf_cmd_args_t* cmd) {
     res = xf_shell_cmd_get_int(cmd, "number", &number);
     res = xf_shell_cmd_get_bool(cmd, "bool", &bool_val);
 
-    printf("input: %s\n\r", input);
-    printf("file: %s\n\r", file);
-    printf("num: %d\n\r", number);
-    printf("bool: %d\n\r", bool_val);
+    printf("input: %s" XF_SHELL_NEWLINE, input);
+    printf("file: %s" XF_SHELL_NEWLINE, file);
+    printf("num: %d" XF_SHELL_NEWLINE, number);
+    printf("bool: %d" XF_SHELL_NEWLINE, bool_val);
     return 0;
 }
 

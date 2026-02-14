@@ -422,7 +422,7 @@ static void cli_putchar(struct xf_cli* cli, char ch, bool is_last) {
         return;
     }
 #if XF_CLI_SERIAL_XLATE
-    if (ch == '\n') {
+    if (ch == '\n' && !XF_SHELL_NEWLINE_IS_CRLF) {
         cli->put_char(cli->cb_data, '\r', false);
     }
 #endif
@@ -480,10 +480,10 @@ static void print_suggestions(struct xf_cli *cli,
 #if XF_CLI_COLORFUL
     cli_puts(cli, XF_CLI_COLOR_RESET);
 #endif
-    cli_puts(cli, "\n");
+    cli_puts(cli, XF_SHELL_NEWLINE);
     for (i = 0; i < match_count; ++i) {
         cli_puts(cli, "  ");
         cli_puts(cli, matches[i]);
-        cli_puts(cli, "\n");
+        cli_puts(cli, XF_SHELL_NEWLINE);
     }
 }

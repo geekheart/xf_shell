@@ -82,7 +82,7 @@ void xf_shell_cmd_handle(xf_getc_t getc)
                 == XF_CMD_NOT_SUPPORTED && cli_argv[0] != NULL) {
             cli_puts(&s_cli, "command not found: ");
             cli_puts(&s_cli, cli_argv[0]);
-            cli_puts(&s_cli, "\n");
+            cli_puts(&s_cli, XF_SHELL_NEWLINE);
         }
 
         xf_cli_prompt(&s_cli);
@@ -446,7 +446,7 @@ static int help_command(const xf_cmd_args_t *cmd)
     xf_cmd_list_t *next;
 
     (void)cmd;
-    cli_puts(&s_cli, ">>>>>>>>>>> help <<<<<<<<<<<<\n\r");
+    cli_puts(&s_cli, ">>>>>>>>>>> help <<<<<<<<<<<<" XF_SHELL_NEWLINE);
     for (next = xf_cmd_list_get_next(&s_cmd_list); next != &s_cmd_list;
             next = xf_cmd_list_get_next(next)) {
         cmd_item_t *it = GET_PARENT_ADDR(next, cmd_item_t, _node);
@@ -457,7 +457,7 @@ static int help_command(const xf_cmd_args_t *cmd)
         cli_puts(&s_cli, it->command);
         cli_puts(&s_cli, ":\t");
         cli_puts(&s_cli, it->help);
-        cli_puts(&s_cli, "\n\r");
+        cli_puts(&s_cli, XF_SHELL_NEWLINE);
     }
     return XF_CMD_OK;
 }
@@ -478,13 +478,13 @@ static int history_command(const xf_cmd_args_t *cmd)
         snprintf(buffer, sizeof(buffer), "\t[%d] ", i);
         cli_puts(&s_cli, buffer);
         cli_puts(&s_cli, line);
-        cli_puts(&s_cli, "\n");
+        cli_puts(&s_cli, XF_SHELL_NEWLINE);
     }
     if (i == 0) {
-        cli_puts(&s_cli, "history is empty\n");
+        cli_puts(&s_cli, "history is empty" XF_SHELL_NEWLINE);
     }
 #else
-    cli_puts(&s_cli, "history is disabled (XF_CLI_HISTORY_LEN=0)\n");
+    cli_puts(&s_cli, "history is disabled (XF_CLI_HISTORY_LEN=0)" XF_SHELL_NEWLINE);
 #endif
     return XF_CMD_OK;
 }
@@ -503,7 +503,7 @@ static void cli_putchar(struct xf_cli *cli, char ch, bool is_last)
         return;
     }
 #if XF_CLI_SERIAL_XLATE
-    if (ch == '\n') {
+    if (ch == '\n' && !XF_SHELL_NEWLINE_IS_CRLF) {
         cli->put_char(cli->cb_data, '\r', false);
     }
 #endif
