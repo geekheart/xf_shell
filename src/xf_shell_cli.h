@@ -152,7 +152,9 @@ void xf_cli_prompt(struct xf_cli *cli);
  * - 非 `NULL`：历史命令字符串；
  * - `NULL`：越界或无可用历史记录。
  */
+#if XF_CLI_HISTORY_LEN
 const char *xf_cli_get_history(struct xf_cli *cli,
                                int history_pos);
+#endif
 
 #endif /* __XF_SHELL_CLI_H__ */

@@ -160,10 +160,10 @@ static void xf_cli_insert_default_char(struct xf_cli *cli,
     }
 }
 
+#if XF_CLI_HISTORY_LEN
 const char *xf_cli_get_history(struct xf_cli *cli,
                                      int history_pos)
 {
-#if XF_CLI_HISTORY_LEN
     int pos = 0;
 
     if (history_pos < 0)
@@ -180,14 +180,8 @@ const char *xf_cli_get_history(struct xf_cli *cli,
     }
 
     return &cli->history[pos];
-#else
-    (void)cli;
-    (void)history_pos;
-    return NULL;
-#endif
 }
 
-#if XF_CLI_HISTORY_LEN
 static void xf_cli_extend_history(struct xf_cli *cli)
 {
     int len = strlen(cli->buffer);
