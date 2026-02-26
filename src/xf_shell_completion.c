@@ -10,7 +10,12 @@
  */
 
 /* ==================== [Includes] ========================================== */
+#if XF_SHELL_COMPLETION_ENABLE
 #include "xf_shell_completion.h"
+#include "xf_shell_cli.h"
+#if XF_SHELL_COMPLETION_ENABLE && XF_SHELL_COMPLETION_ENABLE_VALUE
+#include "xf_shell_completion_context.h"
+#endif
 #include <stdio.h>
 #include <string.h>
 #include "xf_shell.h"
@@ -29,22 +34,47 @@ typedef xf_opt_arg_t cmd_opt_t;
 
 static bool is_whitespace(char ch);
 static bool starts_with(const char* str, const char* prefix);
-static cmd_item_t* find_command_by_name(xf_cmd_list_t* cmd_list, const char* name);
-static int count_registered_commands(xf_cmd_list_t* cmd_list);
-static int count_command_option_candidates(cmd_item_t* cmd);
+static int copy_prefix_from_line(const struct xf_cli* cli,
+                                 int start,
+                                 int cursor,
+                                 char prefix[],
+                                 int prefix_size);
+static cmd_item_t* find_command_by_name(cmd_item_t *const *cmd_table,
+                                        int cmd_count,
+                                        const char* name);
 static bool add_match(char matches[][XF_CLI_MAX_LINE],
                       int *match_count,
                       int max_matches,
                       const char *value);
-static int collect_command_matches(xf_cmd_list_t *cmd_list,
+static int collect_command_matches(cmd_item_t *const *cmd_table,
+                                   int cmd_count,
                                    const char *prefix,
                                    char matches[][XF_CLI_MAX_LINE],
-                                   int max_matches);
+                                   int max_matches,
+                                   int* total_candidates);
+#if XF_SHELL_COMPLETION_ENABLE_OPTION
 static int collect_option_matches(cmd_item_t *cmd,
                                   const char *prefix,
                                   char matches[][XF_CLI_MAX_LINE],
-                                  int max_matches);
-static cmd_item_t* resolve_current_command(const struct xf_cli* cli, xf_cmd_list_t* cmd_list);
+                                  int max_matches,
+                                  int* total_candidates);
+#endif
+#if XF_SHELL_COMPLETION_ENABLE_VALUE
+static int collect_completion_matches(const xf_completion_words_t* completion,
+                                      const char* prefix,
+                                      char matches[][XF_CLI_MAX_LINE],
+                                      int max_matches,
+                                      int* total_candidates);
+static void resolve_value_completion(const xf_completion_words_t* completion,
+                                     const char* prefix,
+                                     char matches[][XF_CLI_MAX_LINE],
+                                     int max_matches,
+                                     int* candidate_budget,
+                                     int* match_count);
+#endif
+static cmd_item_t* resolve_current_command(const struct xf_cli* cli,
+                                           cmd_item_t *const *cmd_table,
+                                           int cmd_count);
 static int common_prefix_len(char matches[][XF_CLI_MAX_LINE], int match_count);
 static bool replace_prefix(struct xf_cli* cli, int start, int cursor, const char* replacement);
 static bool insert_space_if_needed(struct xf_cli* cli);
@@ -53,9 +83,11 @@ static void cli_puts(struct xf_cli* cli, const char* s);
 static void cli_ansi(struct xf_cli* cli, int n, char code);
 static void term_cursor_back(struct xf_cli* cli, int n);
 static void redraw_line(struct xf_cli* cli);
+#if XF_SHELL_COMPLETION_ENABLE_SUGGESTIONS
 static void print_suggestions(struct xf_cli *cli,
                               char matches[][XF_CLI_MAX_LINE],
                               int match_count);
+#endif
 
 /* ==================== [Static Variables] ================================== */
 
@@ -63,10 +95,13 @@ static void print_suggestions(struct xf_cli *cli,
 
 /* ==================== [Global Functions] ================================== */
 
+#if XF_SHELL_COMPLETION_ENABLE
+
 bool xf_shell_completion_handle_tab(struct xf_cli *cli,
-                                      xf_cmd_list_t *cmd_list,
-                                      char matches[][XF_CLI_MAX_LINE],
-                                      int max_matches)
+                                    xf_shell_cmd_t *const *cmd_table,
+                                    int cmd_count,
+                                    char matches[][XF_CLI_MAX_LINE],
+                                    int max_matches)
 {
     int token_start;
     int prefix_len;
@@ -77,8 +112,11 @@ bool xf_shell_completion_handle_tab(struct xf_cli *cli,
     int candidate_budget = 0;
     int match_count = 0;
     cmd_item_t* cmd = NULL;
+    int replace_start;
+    int replace_cursor;
 
-    if (cli == NULL || cmd_list == NULL || matches == NULL || max_matches <= 0) {
+    if (cli == NULL || cmd_table == NULL || cmd_count < 0 ||
+        matches == NULL || max_matches <= 0) {
         return false;
     }
 
@@ -105,30 +143,59 @@ bool xf_shell_completion_handle_tab(struct xf_cli *cli,
         }
     }
 
-    prefix_len = cli->cursor - token_start;
-    if (prefix_len < 0) {
-        prefix_len = 0;
-    }
-    if (prefix_len >= (int)sizeof(prefix)) {
-        prefix_len = (int)sizeof(prefix) - 1;
-    }
-    memcpy(prefix, &cli->buffer[token_start], (size_t)prefix_len);
-    prefix[prefix_len] = '\0';
+    prefix_len = copy_prefix_from_line(cli, token_start, cli->cursor,
+                                       prefix, (int)sizeof(prefix));
 
     token_end = cli->cursor;
     while (token_end < cli->len && !is_whitespace(cli->buffer[token_end])) {
         token_end++;
     }
     at_token_end = (token_end == cli->cursor);
+    replace_start = token_start;
+    replace_cursor = cli->cursor;
 
     if (first_token) {
-        candidate_budget = count_registered_commands(cmd_list);
-        match_count = collect_command_matches(cmd_list, prefix, matches, max_matches);
+        match_count = collect_command_matches(cmd_table, cmd_count,
+                                              prefix, matches, max_matches,
+                                              &candidate_budget);
     } else {
-        cmd = resolve_current_command(cli, cmd_list);
-        if (cmd != NULL && (prefix[0] == '-' || prefix[0] == '\0')) {
-            candidate_budget = count_command_option_candidates(cmd);
-            match_count = collect_option_matches(cmd, prefix, matches, max_matches);
+        cmd = resolve_current_command(cli, cmd_table, cmd_count);
+        if (cmd != NULL) {
+#if XF_SHELL_COMPLETION_ENABLE_VALUE
+            xf_shell_completion_context_t context;
+
+            xf_shell_completion_resolve_context(cli, cmd, cli->cursor, &context);
+
+            if (context.inline_opt != NULL) {
+                prefix_len = copy_prefix_from_line(cli, context.inline_value_start, cli->cursor,
+                                                   prefix, (int)sizeof(prefix));
+                replace_start = context.inline_value_start;
+                replace_cursor = cli->cursor;
+
+                resolve_value_completion(&context.inline_opt->completion, prefix, matches,
+                                         max_matches, &candidate_budget, &match_count);
+            } else if (context.pending_opt != NULL) {
+                resolve_value_completion(&context.pending_opt->completion, prefix, matches,
+                                         max_matches, &candidate_budget, &match_count);
+            } else {
+                if (prefix[0] != '-' && context.positional_arg != NULL) {
+                    resolve_value_completion(&context.positional_arg->completion, prefix, matches,
+                                             max_matches, &candidate_budget, &match_count);
+                }
+#if XF_SHELL_COMPLETION_ENABLE_OPTION
+                if ((prefix[0] == '-') || (candidate_budget <= 0 && prefix[0] == '\0')) {
+                    match_count = collect_option_matches(cmd, prefix,
+                                                         matches, max_matches,
+                                                         &candidate_budget);
+                }
+#endif
+            }
+#elif XF_SHELL_COMPLETION_ENABLE_OPTION
+            if ((prefix[0] == '-') || (prefix[0] == '\0')) {
+                match_count = collect_option_matches(cmd, prefix, matches, max_matches,
+                                                     &candidate_budget);
+            }
+#endif
         }
     }
 
@@ -143,7 +210,7 @@ bool xf_shell_completion_handle_tab(struct xf_cli *cli,
     }
 
     if (match_count == 1) {
-        bool replaced = replace_prefix(cli, token_start, cli->cursor, matches[0]);
+        bool replaced = replace_prefix(cli, replace_start, replace_cursor, matches[0]);
         if (!replaced) {
             cli_putchar(cli, '\a', true);
             return true;
@@ -161,7 +228,7 @@ bool xf_shell_completion_handle_tab(struct xf_cli *cli,
             char lcp[XF_CLI_MAX_LINE];
             memcpy(lcp, matches[0], (size_t)lcp_len);
             lcp[lcp_len] = '\0';
-            if (!replace_prefix(cli, token_start, cli->cursor, lcp)) {
+            if (!replace_prefix(cli, replace_start, replace_cursor, lcp)) {
                 cli_putchar(cli, '\a', true);
                 return true;
             }
@@ -170,12 +237,17 @@ bool xf_shell_completion_handle_tab(struct xf_cli *cli,
         }
     }
 
+#if XF_SHELL_COMPLETION_ENABLE_SUGGESTIONS
     print_suggestions(cli, matches, match_count);
+#endif
     redraw_line(cli);
     return true;
 }
+#endif
 
 /* ==================== [Static Functions] ================================== */
+
+#if XF_SHELL_COMPLETION_ENABLE
 
 static bool is_whitespace(char ch) {
     return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r');
@@ -192,57 +264,55 @@ static bool starts_with(const char* str, const char* prefix) {
     return true;
 }
 
-static cmd_item_t* find_command_by_name(xf_cmd_list_t* cmd_list, const char* name) {
-    xf_cmd_list_t* next;
+static int copy_prefix_from_line(const struct xf_cli* cli,
+                                 int start,
+                                 int cursor,
+                                 char prefix[],
+                                 int prefix_size) {
+    int len;
 
-    if (cmd_list == NULL || name == NULL) {
+    if (cli == NULL || prefix == NULL || prefix_size <= 0) {
+        return 0;
+    }
+
+    if (start < 0) {
+        start = 0;
+    }
+    if (cursor < start) {
+        cursor = start;
+    }
+    if (cursor > cli->len) {
+        cursor = cli->len;
+    }
+
+    len = cursor - start;
+    if (len >= prefix_size) {
+        len = prefix_size - 1;
+    }
+    if (len > 0) {
+        memcpy(prefix, &cli->buffer[start], (size_t)len);
+    }
+    prefix[len] = '\0';
+    return len;
+}
+
+static cmd_item_t* find_command_by_name(cmd_item_t *const *cmd_table,
+                                        int cmd_count,
+                                        const char* name) {
+    int i;
+
+    if (cmd_table == NULL || cmd_count <= 0 || name == NULL) {
         return NULL;
     }
 
-    for (next = xf_cmd_list_get_next(cmd_list); next != cmd_list; next = xf_cmd_list_get_next(next)) {
-        cmd_item_t* it = GET_PARENT_ADDR(next, cmd_item_t, _node);
-        if (strcmp(name, it->command) == 0) {
+    for (i = 0; i < cmd_count; ++i) {
+        cmd_item_t* it = cmd_table[i];
+        if (it != NULL && strcmp(name, it->command) == 0) {
             return it;
         }
     }
 
     return NULL;
-}
-
-static int count_registered_commands(xf_cmd_list_t* cmd_list) {
-    int count = 0;
-    xf_cmd_list_t* next;
-
-    if (cmd_list == NULL) {
-        return 0;
-    }
-
-    for (next = xf_cmd_list_get_next(cmd_list); next != cmd_list; next = xf_cmd_list_get_next(next)) {
-        count++;
-    }
-
-    return count;
-}
-
-static int count_command_option_candidates(cmd_item_t* cmd) {
-    int count = 0;
-    xf_cmd_list_t* next;
-
-    if (cmd == NULL) {
-        return 0;
-    }
-
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list; next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t* it = GET_PARENT_ADDR(next, cmd_opt_t, _node);
-        if (it->long_opt != NULL && it->long_opt[0] != '\0') {
-            count++;
-        }
-        if (it->short_opt != '\0') {
-            count++;
-        }
-    }
-
-    return count;
 }
 
 static bool add_match(char matches[][XF_CLI_MAX_LINE],
@@ -272,20 +342,32 @@ static bool add_match(char matches[][XF_CLI_MAX_LINE],
     return true;
 }
 
-static int collect_command_matches(xf_cmd_list_t *cmd_list,
+static int collect_command_matches(cmd_item_t *const *cmd_table,
+                                   int cmd_count,
                                    const char *prefix,
                                    char matches[][XF_CLI_MAX_LINE],
-                                   int max_matches)
+                                   int max_matches,
+                                   int* total_candidates)
 {
     int match_count = 0;
-    xf_cmd_list_t* next;
+    int i;
 
-    if (cmd_list == NULL) {
+    if (total_candidates != NULL) {
+        *total_candidates = 0;
+    }
+
+    if (cmd_table == NULL || cmd_count <= 0) {
         return 0;
     }
 
-    for (next = xf_cmd_list_get_next(cmd_list); next != cmd_list; next = xf_cmd_list_get_next(next)) {
-        cmd_item_t* it = GET_PARENT_ADDR(next, cmd_item_t, _node);
+    for (i = 0; i < cmd_count; ++i) {
+        cmd_item_t* it = cmd_table[i];
+        if (it == NULL) {
+            continue;
+        }
+        if (total_candidates != NULL) {
+            (*total_candidates)++;
+        }
         if (starts_with(it->command, prefix)) {
             (void)add_match(matches, &match_count, max_matches, it->command);
         }
@@ -294,23 +376,35 @@ static int collect_command_matches(xf_cmd_list_t *cmd_list,
     return match_count;
 }
 
+#if XF_SHELL_COMPLETION_ENABLE_OPTION
 static int collect_option_matches(cmd_item_t *cmd,
                                   const char *prefix,
                                   char matches[][XF_CLI_MAX_LINE],
-                                  int max_matches)
+                                  int max_matches,
+                                  int* total_candidates)
 {
     int match_count = 0;
-    xf_cmd_list_t* next;
+    uint16_t i;
     char candidate[XF_CLI_MAX_LINE];
+
+    if (total_candidates != NULL) {
+        *total_candidates = 0;
+    }
 
     if (cmd == NULL) {
         return 0;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list; next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t* it = GET_PARENT_ADDR(next, cmd_opt_t, _node);
+    for (i = 0; i < cmd->_opt_count; ++i) {
+        cmd_opt_t* it = cmd->_opts[i];
+        if (it == NULL) {
+            continue;
+        }
 
         if (it->long_opt != NULL && it->long_opt[0] != '\0') {
+            if (total_candidates != NULL) {
+                (*total_candidates)++;
+            }
             snprintf(candidate, sizeof(candidate), "--%s", it->long_opt);
             if (starts_with(candidate, prefix)) {
                 (void)add_match(matches, &match_count, max_matches, candidate);
@@ -318,6 +412,9 @@ static int collect_option_matches(cmd_item_t *cmd,
         }
 
         if (it->short_opt != '\0') {
+            if (total_candidates != NULL) {
+                (*total_candidates)++;
+            }
             candidate[0] = '-';
             candidate[1] = it->short_opt;
             candidate[2] = '\0';
@@ -329,14 +426,78 @@ static int collect_option_matches(cmd_item_t *cmd,
 
     return match_count;
 }
+#endif
 
-static cmd_item_t* resolve_current_command(const struct xf_cli* cli, xf_cmd_list_t* cmd_list) {
+#if XF_SHELL_COMPLETION_ENABLE_VALUE
+static int collect_completion_matches(const xf_completion_words_t* completion,
+                                      const char* prefix,
+                                      char matches[][XF_CLI_MAX_LINE],
+                                      int max_matches,
+                                      int* total_candidates)
+{
+    int match_count = 0;
+    const char* const* items = NULL;
+    uint16_t count = 0U;
+    uint16_t i;
+
+    if (total_candidates != NULL) {
+        *total_candidates = 0;
+    }
+
+    if (completion != NULL) {
+        items = completion->items;
+        count = completion->count;
+    }
+
+    if (items == NULL || count == 0U || prefix == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i < count; ++i) {
+        const char* it = items[i];
+        if (it == NULL || it[0] == '\0') {
+            continue;
+        }
+        if (total_candidates != NULL) {
+            (*total_candidates)++;
+        }
+        if (starts_with(it, prefix)) {
+            (void)add_match(matches, &match_count, max_matches, it);
+        }
+    }
+
+    return match_count;
+}
+
+static void resolve_value_completion(const xf_completion_words_t* completion,
+                                     const char* prefix,
+                                     char matches[][XF_CLI_MAX_LINE],
+                                     int max_matches,
+                                     int* candidate_budget,
+                                     int* match_count)
+{
+    int total = 0;
+    int matched = collect_completion_matches(completion, prefix, matches,
+                                             max_matches, &total);
+
+    if (candidate_budget != NULL) {
+        *candidate_budget = total;
+    }
+    if (match_count != NULL) {
+        *match_count = matched;
+    }
+}
+#endif
+
+static cmd_item_t* resolve_current_command(const struct xf_cli* cli,
+                                           cmd_item_t *const *cmd_table,
+                                           int cmd_count) {
     int start = 0;
     int end = 0;
     int cmd_len;
     char command[XF_CLI_MAX_LINE];
 
-    if (cli == NULL || cmd_list == NULL) {
+    if (cli == NULL || cmd_table == NULL || cmd_count <= 0) {
         return NULL;
     }
 
@@ -358,7 +519,7 @@ static cmd_item_t* resolve_current_command(const struct xf_cli* cli, xf_cmd_list
 
     memcpy(command, &cli->buffer[start], (size_t)cmd_len);
     command[cmd_len] = '\0';
-    return find_command_by_name(cmd_list, command);
+    return find_command_by_name(cmd_table, cmd_count, command);
 }
 
 static int common_prefix_len(char matches[][XF_CLI_MAX_LINE], int match_count)
@@ -471,6 +632,7 @@ static void redraw_line(struct xf_cli* cli) {
     }
 }
 
+#if XF_SHELL_COMPLETION_ENABLE_SUGGESTIONS
 static void print_suggestions(struct xf_cli *cli,
                               char matches[][XF_CLI_MAX_LINE],
                               int match_count)
@@ -487,3 +649,6 @@ static void print_suggestions(struct xf_cli *cli,
         cli_puts(cli, XF_SHELL_NEWLINE);
     }
 }
+#endif
+#endif
+#endif

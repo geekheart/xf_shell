@@ -14,7 +14,7 @@
 
 /* ==================== [Includes] ========================================== */
 #include <stdbool.h>
-#include "xf_shell_cmd_list.h"
+#include "xf_shell_config_internal.h"
 #include "xf_shell_options.h"
 
 #ifdef __cplusplus
@@ -22,31 +22,6 @@ extern "C" {
 #endif
 
 /* ==================== [Defines] =========================================== */
-
-#ifndef XF_SHELL_MAX_COMMANDS
-#define XF_SHELL_MAX_COMMANDS 24
-#endif
-
-#ifndef XF_SHELL_MAX_OPTS_PER_CMD
-#define XF_SHELL_MAX_OPTS_PER_CMD 16
-#endif
-
-#ifndef XF_SHELL_MAX_MATCHES
-#define XF_SHELL_MAX_MATCHES (XF_SHELL_MAX_COMMANDS + (XF_SHELL_MAX_OPTS_PER_CMD * 2))
-#endif
-
-#ifndef XF_SHELL_NEWLINE
-#if defined(_WIN32) || defined(_WIN64)
-#define XF_SHELL_NEWLINE "\r\n"
-#else
-#define XF_SHELL_NEWLINE "\n"
-#endif
-#endif
-
-#ifndef XF_SHELL_NEWLINE_IS_CRLF
-#define XF_SHELL_NEWLINE_IS_CRLF \
-    (XF_SHELL_NEWLINE[0] == '\r' && XF_SHELL_NEWLINE[1] == '\n' && XF_SHELL_NEWLINE[2] == '\0')
-#endif
 
 /* ==================== [Typedefs] ========================================== */
 
@@ -88,6 +63,11 @@ typedef struct _xf_shell_cmd_t xf_shell_cmd_t;
 typedef struct _xf_opt_arg_t xf_opt_arg_t;
 typedef struct _xf_arg_t xf_arg_t;
 
+typedef struct {
+    const char* const* items;
+    uint16_t count;
+} xf_completion_words_t;
+
 /**
  * @brief 选项合法性校验回调类型。
  *
@@ -112,9 +92,10 @@ struct _xf_shell_cmd_t {
     const char* command;
     const char* help;
     xf_shell_cmd_func_t func;
-    xf_cmd_list_t _node;
-    xf_cmd_list_t _opt_list;
-    xf_cmd_list_t _arg_list;
+    uint16_t _opt_count;
+    uint16_t _arg_count;
+    xf_opt_arg_t* const* _opts;
+    xf_arg_t* const* _args;
 };
 
 struct _xf_opt_arg_t {
@@ -131,8 +112,7 @@ struct _xf_opt_arg_t {
         float default_floating;
         const char* default_string;
     };
-    xf_cmd_list_t _node;
-    xf_shell_cmd_t* _owner;
+    xf_completion_words_t completion;
     xf_options_t _opt;
 };
 
@@ -149,8 +129,7 @@ struct _xf_arg_t {
         float default_floating;
         const char* default_string;
     };
-    xf_cmd_list_t _node;
-    xf_shell_cmd_t* _owner;
+    xf_completion_words_t completion;
     xf_options_t _opt;
 };
 
@@ -180,59 +159,52 @@ void xf_shell_cmd_init(const char* prompt, xf_putc_t putc, void* user_data);
 void xf_shell_cmd_handle(xf_getc_t getc);
 
 /**
- * @brief 注册命令对象到控制台。
- *
- * @param[in,out] cmd 用户提供的静态命令对象。
- * @return `xf_cmd_return_t` 状态码。
- */
-int xf_shell_cmd_register(xf_shell_cmd_t* cmd);
-
-/**
- * @brief 从控制台注销命令对象。
+ * @brief 绑定静态命令表（数组索引模式）。
  *
  * @details
- * 注销时会同时解除该命令下已挂载的选项与位置参数。
+ * 该接口用于一次性注入命令表。建议在 `xf_shell_cmd_init()` 之前调用。
+ * 建议在 `xf_shell_cmd_init()` 之前调用。
  *
- * @param[in,out] cmd 待注销命令对象。
+ * @param[in] cmd_table 命令对象指针数组。
+ * @param[in] cmd_count 命令数量。
+ *
  * @return `xf_cmd_return_t` 状态码。
  */
-int xf_shell_cmd_unregister(xf_shell_cmd_t* cmd);
+int xf_shell_cmd_set_table(xf_shell_cmd_t* const* cmd_table, uint16_t cmd_count);
 
 /**
- * @brief 为命令挂载一个选项参数。
+ * @brief 为选项参数设置可用于 Tab 补全的候选词。
  *
- * @param[in,out] cmd 目标命令对象。
- * @param[in,out] arg 用户提供的静态选项对象。
+ * @details
+ * 候选词数组由调用方持有，需保证在命令生命周期内保持有效。
+ * 当光标位于该选项的取值位置时，补全器会按前缀匹配这些候选词。
+ *
+ * @param[in,out] opt 目标选项对象。
+ * @param[in] candidates 候选词数组首地址，可为 `NULL`（需配合 `count=0`）。
+ * @param[in] count 候选词数量。
+ *
  * @return `xf_cmd_return_t` 状态码。
  */
-int xf_shell_cmd_set_opt(xf_shell_cmd_t* cmd, xf_opt_arg_t* arg);
+int xf_shell_cmd_set_opt_candidates(xf_opt_arg_t* opt,
+                                    const char* const* candidates,
+                                    uint16_t count);
 
 /**
- * @brief 从命令中卸载一个选项参数。
+ * @brief 为位置参数设置可用于 Tab 补全的候选词。
  *
- * @param[in,out] cmd 目标命令对象。
- * @param[in,out] arg 待卸载选项对象。
+ * @details
+ * 候选词数组由调用方持有，需保证在命令生命周期内保持有效。
+ * 当光标位于该位置参数输入位置时，补全器会按前缀匹配这些候选词。
+ *
+ * @param[in,out] arg 目标位置参数对象。
+ * @param[in] candidates 候选词数组首地址，可为 `NULL`（需配合 `count=0`）。
+ * @param[in] count 候选词数量。
+ *
  * @return `xf_cmd_return_t` 状态码。
  */
-int xf_shell_cmd_unset_opt(xf_shell_cmd_t* cmd, xf_opt_arg_t* arg);
-
-/**
- * @brief 为命令挂载一个位置参数。
- *
- * @param[in,out] cmd 目标命令对象。
- * @param[in,out] arg 用户提供的静态位置参数对象。
- * @return `xf_cmd_return_t` 状态码。
- */
-int xf_shell_cmd_set_arg(xf_shell_cmd_t* cmd, xf_arg_t* arg);
-
-/**
- * @brief 从命令中卸载一个位置参数。
- *
- * @param[in,out] cmd 目标命令对象。
- * @param[in,out] arg 待卸载位置参数对象。
- * @return `xf_cmd_return_t` 状态码。
- */
-int xf_shell_cmd_unset_arg(xf_shell_cmd_t* cmd, xf_arg_t* arg);
+int xf_shell_cmd_set_arg_candidates(xf_arg_t* arg,
+                                    const char* const* candidates,
+                                    uint16_t count);
 
 /**
  * @brief 按名称读取 `int32_t` 类型参数值。
@@ -284,6 +256,10 @@ int xf_shell_cmd_get_string(const xf_cmd_args_t* cmd, const char* long_opt, cons
 int xf_shell_cmd_run(int argc, const char** argv);
 
 /* ==================== [Macros] ============================================ */
+
+#ifndef XF_SHELL_COUNT_OF
+#define XF_SHELL_COUNT_OF(arr) ((uint16_t)(sizeof(arr) / sizeof((arr)[0])))
+#endif
 
 #ifdef __cplusplus
 } /* extern "C" */

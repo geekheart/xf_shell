@@ -52,9 +52,11 @@ int xf_opt_parse(xf_options_t *options, int argc, const char **argv)
         if (!arg) {
             continue;
         }
+#if XF_SHELL_PARSER_HELP_ENABLE
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             return XF_OPTION_ERR_HELP;
         }
+#endif
         if (arg[0] == '-' && arg[1] == '-') {
             char *end = strchr(arg, '=');
             int len = strlen(&arg[2]);

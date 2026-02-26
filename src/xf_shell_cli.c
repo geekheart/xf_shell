@@ -32,14 +32,12 @@ static void cli_puts(struct xf_cli *cli, const char *s)
         cli_putchar(cli, *s, s[1] == '\0');
 }
 
+#if XF_CLI_COLORFUL
 static void cli_set_command_color(struct xf_cli *cli)
 {
-#if XF_CLI_COLORFUL
     cli_puts(cli, XF_CLI_COMMAND_COLOR);
-#else
-    (void)cli;
-#endif
 }
+#endif
 
 static void cli_reset_color(struct xf_cli *cli)
 {

@@ -1,7 +1,12 @@
 add_rules("mode.debug", "mode.release")
+set_warnings("all", "error")
+set_languages("c99")
 
 target("shell")
     set_kind("binary")
+    if is_plat("linux", "macosx", "bsd") then
+        add_defines("_POSIX_C_SOURCE=200809L")
+    end
     add_files("src/*.c")
     add_files("example/*.c")
     add_includedirs("src", "example")

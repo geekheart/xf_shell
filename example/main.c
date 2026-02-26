@@ -126,11 +126,27 @@ static bool validate_number_range(const xf_opt_arg_t* opt, const char** error_ms
     return true;
 }
 
-static xf_shell_cmd_t s_test_cmd = {
-    .command = "test",
-    .func = test,
-    .help = "测试命令",
-};
+static bool validate_input_choice(const xf_arg_t* arg, const char** error_msg,
+                                  bool* append_help)
+{
+    const char* val = arg->_opt.string;
+
+    if (val == NULL) {
+        return true;
+    }
+
+    if (strcmp(val, "alpha") == 0 || strcmp(val, "beta") == 0) {
+        return true;
+    }
+
+    if (error_msg != NULL) {
+        *error_msg = "must be one of: alpha, beta";
+    }
+    if (append_help != NULL) {
+        *append_help = true;
+    }
+    return false;
+}
 
 static xf_opt_arg_t s_opt_file = {
     .long_opt = "file",
@@ -145,6 +161,12 @@ static xf_arg_t s_arg_input = {
     .description = "Input positional string",
     .type = XF_OPTION_TYPE_STRING,
     .require = false,
+    .validator = validate_input_choice,
+};
+
+static const char* s_input_candidates[] = {
+    "alpha",
+    "beta",
 };
 
 static xf_opt_arg_t s_opt_number = {
@@ -168,18 +190,41 @@ static xf_opt_arg_t s_opt_bool = {
     .default_boolean= 0,
 };
 
+static xf_opt_arg_t* s_test_opts[] = {
+    &s_opt_file,
+    &s_opt_number,
+    &s_opt_bool,
+};
+
+static xf_arg_t* s_test_args[] = {
+    &s_arg_input,
+};
+
+static xf_shell_cmd_t s_test_cmd = {
+    .command = "test",
+    .func = test,
+    .help = "测试命令",
+    ._opt_count = XF_SHELL_COUNT_OF(s_test_opts),
+    ._arg_count = XF_SHELL_COUNT_OF(s_test_args),
+    ._opts = s_test_opts,
+    ._args = s_test_args,
+};
+
+static xf_shell_cmd_t* s_cmd_table[] = {
+    &s_test_cmd,
+};
+
+
 int main(void) {
     setup_signal_handlers();
     enable_terminal_char_mode();
 
-    /****************注册命令*******************/
-    xf_shell_cmd_register(&s_test_cmd);
+    xf_shell_cmd_set_arg_candidates(&s_arg_input, s_input_candidates,
+                                    (uint16_t)(sizeof(s_input_candidates) /
+                                               sizeof(s_input_candidates[0])));
 
-    /****************注册参数*******************/
-    xf_shell_cmd_set_arg(&s_test_cmd, &s_arg_input);
-    xf_shell_cmd_set_opt(&s_test_cmd, &s_opt_file);
-    xf_shell_cmd_set_opt(&s_test_cmd, &s_opt_number);
-    xf_shell_cmd_set_opt(&s_test_cmd, &s_opt_bool);
+    xf_shell_cmd_set_table(s_cmd_table,
+                           XF_SHELL_COUNT_OF(s_cmd_table));
 
     /****************初始化及调用*******************/
 

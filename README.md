@@ -15,7 +15,40 @@
 8. 支持内部直接调用命令
 9. 可配置的彩色颜色输出宏
 
+## 补全功能裁剪（嵌入式推荐）
 
+可通过宏关闭非必要补全能力，减少代码体积和 RAM 占用：
+
+1. `XF_SHELL_COMPLETION_ENABLE`：总开关，`0` 时关闭 Tab 补全逻辑（Tab 不写入输入缓冲）
+2. `XF_SHELL_COMPLETION_ENABLE_OPTION`：选项名补全（`-x`/`--name`）
+3. `XF_SHELL_COMPLETION_ENABLE_VALUE`：参数值补全（位置参数/选项候选词）
+4. `XF_SHELL_COMPLETION_ENABLE_SUGGESTIONS`：多候选列表输出
+
+快速方式：开启 `XF_SHELL_PROFILE_MIN_SIZE=1`，会自动切到轻量默认值：
+
+1. `XF_SHELL_COMPLETION_ENABLE_OPTION=0`
+2. `XF_SHELL_COMPLETION_ENABLE_VALUE=0`
+3. `XF_SHELL_COMPLETION_ENABLE_SUGGESTIONS=0`
+4. `XF_CLI_HISTORY_LEN=0`
+5. `XF_CLI_MAX_LINE=64`
+6. `XF_CLI_MAX_ARGC=8`
+7. `XF_SHELL_MAX_COMMANDS=12`
+8. `XF_SHELL_MAX_OPTS_PER_CMD=8`
+
+例如只保留“命令名补全”，可配置：
+
+```c
+#define XF_SHELL_COMPLETION_ENABLE 1
+#define XF_SHELL_COMPLETION_ENABLE_OPTION 0
+#define XF_SHELL_COMPLETION_ENABLE_VALUE 0
+#define XF_SHELL_COMPLETION_ENABLE_SUGGESTIONS 0
+```
+
+完全关闭补全（最省资源）：
+
+```c
+#define XF_SHELL_COMPLETION_ENABLE 0
+```
 
 ## 如何运行?
 1. clone 本仓库

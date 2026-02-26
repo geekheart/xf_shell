@@ -14,10 +14,15 @@
 #include <stdio.h>
 #include <string.h>
 #include "xf_shell_cli.h"
-#include "xf_shell_cmd_list.h"
 #include "xf_shell_options.h"
 
 /* ==================== [Defines] =========================================== */
+
+#if defined(__GNUC__) || defined(__clang__)
+#define XF_SHELL_PARSER_NOINLINE __attribute__((noinline))
+#else
+#define XF_SHELL_PARSER_NOINLINE
+#endif
 
 /* ==================== [Typedefs] ========================================== */
 
@@ -36,11 +41,24 @@ static cmd_opt_t* find_opt_by_name(cmd_item_t* cmd, const char* name);
 static cmd_opt_t* find_opt_by_short(cmd_item_t* cmd, char short_opt);
 static cmd_opt_t* find_opt_by_long_name(cmd_item_t* cmd, const char* name, size_t len);
 static cmd_arg_t* find_arg_by_name(cmd_item_t* cmd, const char* name);
+static xf_options_t* find_runtime_value_by_name(cmd_item_t* cmd, const char* name);
 static int collect_positional_values(cmd_item_t* cmd, int argc, const char** argv, const char** values, int max_values);
+static XF_SHELL_PARSER_NOINLINE void sync_runtime_value(xf_options_t* runtime,
+                                                        xf_opt_type_t type,
+                                                        bool require,
+                                                        bool has_default,
+                                                        int32_t default_integer,
+                                                        bool default_boolean,
+                                                        float default_floating,
+                                                        const char* default_string);
+static XF_SHELL_PARSER_NOINLINE int parser_get_value(const xf_cmd_args_t* cmd,
+                                                     const char* long_opt,
+                                                     void* value,
+                                                     xf_opt_type_t type);
 static bool is_help_token(const char* arg);
+#if XF_SHELL_PARSER_HELP_ENABLE
 static cmd_opt_t* find_help_target_option(cmd_item_t* cmd, int argc, const char** argv, int help_idx);
 static bool handle_builtin_help(cmd_item_t* cmd, int argc, const char** argv, const parser_output_t* out);
-static bool validate_known_options(cmd_item_t* cmd, int argc, const char** argv, const char** bad_token);
 static const char* opt_expected_desc(xf_opt_type_t type);
 static void out_puts(const parser_output_t* out, const char* s);
 static void print_option_usage(cmd_opt_t* opt, const parser_output_t* out);
@@ -50,6 +68,12 @@ static void print_command_args_usage(cmd_item_t* cmd, const parser_output_t* out
 static void print_command_options_usage(cmd_item_t* cmd, const parser_output_t* out);
 static void print_option_error(cmd_opt_t* opt, const char* message, bool append_help, const parser_output_t* out);
 static void print_arg_error(cmd_arg_t* arg, const char* message, bool append_help, const parser_output_t* out);
+#else
+static void out_puts(const parser_output_t* out, const char* s);
+static void print_option_error(cmd_opt_t* opt, const char* message, bool append_help, const parser_output_t* out);
+static void print_arg_error(cmd_arg_t* arg, const char* message, bool append_help, const parser_output_t* out);
+#endif
+static bool validate_known_options(cmd_item_t* cmd, int argc, const char** argv, const char** bad_token);
 static void print_unknown_option_error(cmd_item_t* cmd, const char* token, bool append_help, const parser_output_t* out);
 static void print_unknown_arg_error(cmd_item_t* cmd, const char* token, bool append_help, const parser_output_t* out);
 
@@ -67,48 +91,9 @@ void xf_shell_parser_sync_opt_runtime(xf_opt_arg_t* opt) {
     opt->_opt.long_opt = opt->long_opt;
     opt->_opt.description = opt->description;
     opt->_opt.short_opt = (uint32_t)(uint8_t)opt->short_opt;
-    opt->_opt.require = opt->require ? 1U : 0U;
-    opt->_opt.has_default = opt->has_default ? 1U : 0U;
-    opt->_opt.provided = 0U;
-    opt->_opt.type = opt->type;
-
-    if (opt->has_default) {
-        switch (opt->type) {
-            case XF_OPTION_TYPE_BOOL:
-                opt->_opt.boolean = opt->default_boolean;
-                break;
-            case XF_OPTION_TYPE_INT:
-                opt->_opt.integer = opt->default_integer;
-                break;
-            case XF_OPTION_TYPE_STRING:
-                opt->_opt.string = opt->default_string;
-                break;
-            case XF_OPTION_TYPE_FLOAT:
-                opt->_opt.floating = opt->default_floating;
-                break;
-            default:
-                opt->_opt.integer = 0;
-                break;
-        }
-    } else {
-        switch (opt->type) {
-            case XF_OPTION_TYPE_BOOL:
-                opt->_opt.boolean = false;
-                break;
-            case XF_OPTION_TYPE_INT:
-                opt->_opt.integer = 0;
-                break;
-            case XF_OPTION_TYPE_STRING:
-                opt->_opt.string = NULL;
-                break;
-            case XF_OPTION_TYPE_FLOAT:
-                opt->_opt.floating = 0.0f;
-                break;
-            default:
-                opt->_opt.integer = 0;
-                break;
-        }
-    }
+    sync_runtime_value(&opt->_opt, opt->type, opt->require, opt->has_default,
+                       opt->default_integer, opt->default_boolean,
+                       opt->default_floating, opt->default_string);
 }
 
 void xf_shell_parser_sync_arg_runtime(xf_arg_t* arg) {
@@ -119,56 +104,17 @@ void xf_shell_parser_sync_arg_runtime(xf_arg_t* arg) {
     arg->_opt.long_opt = arg->name;
     arg->_opt.description = arg->description;
     arg->_opt.short_opt = 0U;
-    arg->_opt.require = arg->require ? 1U : 0U;
-    arg->_opt.has_default = arg->has_default ? 1U : 0U;
-    arg->_opt.provided = 0U;
-    arg->_opt.type = arg->type;
-
-    if (arg->has_default) {
-        switch (arg->type) {
-            case XF_OPTION_TYPE_BOOL:
-                arg->_opt.boolean = arg->default_boolean;
-                break;
-            case XF_OPTION_TYPE_INT:
-                arg->_opt.integer = arg->default_integer;
-                break;
-            case XF_OPTION_TYPE_STRING:
-                arg->_opt.string = arg->default_string;
-                break;
-            case XF_OPTION_TYPE_FLOAT:
-                arg->_opt.floating = arg->default_floating;
-                break;
-            default:
-                arg->_opt.integer = 0;
-                break;
-        }
-    } else {
-        switch (arg->type) {
-            case XF_OPTION_TYPE_BOOL:
-                arg->_opt.boolean = false;
-                break;
-            case XF_OPTION_TYPE_INT:
-                arg->_opt.integer = 0;
-                break;
-            case XF_OPTION_TYPE_STRING:
-                arg->_opt.string = NULL;
-                break;
-            case XF_OPTION_TYPE_FLOAT:
-                arg->_opt.floating = 0.0f;
-                break;
-            default:
-                arg->_opt.integer = 0;
-                break;
-        }
-    }
+    sync_runtime_value(&arg->_opt, arg->type, arg->require, arg->has_default,
+                       arg->default_integer, arg->default_boolean,
+                       arg->default_floating, arg->default_string);
 }
 
 int xf_shell_parser_run(xf_shell_cmd_t* cmd, int argc, const char** argv, xf_shell_parser_puts_t puts_fn, void* puts_ctx) {
-    xf_cmd_list_t* next;
     const char* bad_token = NULL;
     const char* positional_values[XF_CLI_MAX_ARGC];
     int positional_count = 0;
     int positional_index = 0;
+    uint16_t i;
     parser_output_t out = {
         .puts_fn = puts_fn,
         .puts_ctx = puts_ctx,
@@ -178,34 +124,44 @@ int xf_shell_parser_run(xf_shell_cmd_t* cmd, int argc, const char** argv, xf_she
         return XF_CMD_NOT_SUPPORTED;
     }
 
+#if XF_SHELL_PARSER_HELP_ENABLE
     if (handle_builtin_help(cmd, argc, argv, &out)) {
         return XF_CMD_OK;
     }
+#endif
 
     if (!validate_known_options(cmd, argc, argv, &bad_token)) {
-        print_unknown_option_error(cmd, bad_token, true, &out);
+        print_unknown_option_error(cmd, bad_token, XF_SHELL_PARSER_HELP_ENABLE, &out);
         return XF_CMD_NO_INVALID_ARG;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list; next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t* it = GET_PARENT_ADDR(next, cmd_opt_t, _node);
+    for (i = 0; i < cmd->_opt_count; ++i) {
+        cmd_opt_t* it = cmd->_opts[i];
         bool should_append_help = true;
         const char* user_error = NULL;
+
+        if (it == NULL) {
+            continue;
+        }
 
         xf_shell_parser_sync_opt_runtime(it);
 
         {
             int arg_ret = xf_opt_parse(&it->_opt, argc, argv);
             if (arg_ret == XF_OPTION_ERR_HELP) {
+#if XF_SHELL_PARSER_HELP_ENABLE
                 print_option_usage(it, &out);
+#else
+                print_option_error(it, "help is disabled", false, &out);
+#endif
                 return XF_CMD_OK;
             }
             if (arg_ret == XF_OPTION_ERR_INVALID_ARG) {
-                print_option_error(it, NULL, true, &out);
+                print_option_error(it, NULL, XF_SHELL_PARSER_HELP_ENABLE, &out);
                 return XF_CMD_NO_INVALID_ARG;
             }
             if (arg_ret == XF_OPTION_ERR_NO_FOUND && it->require) {
-                print_option_error(it, "required option is missing", true, &out);
+                print_option_error(it, "required option is missing", XF_SHELL_PARSER_HELP_ENABLE, &out);
                 return XF_CMD_NO_INVALID_ARG;
             }
         }
@@ -220,29 +176,33 @@ int xf_shell_parser_run(xf_shell_cmd_t* cmd, int argc, const char** argv, xf_she
 
     positional_count = collect_positional_values(cmd, argc, argv, positional_values, XF_CLI_MAX_ARGC);
 
-    if (positional_count > 0 && xf_cmd_list_is_empty(&cmd->_arg_list)) {
-        print_unknown_arg_error(cmd, positional_values[0], true, &out);
+    if (positional_count > 0 && cmd->_arg_count == 0U) {
+        print_unknown_arg_error(cmd, positional_values[0], XF_SHELL_PARSER_HELP_ENABLE, &out);
         return XF_CMD_NO_INVALID_ARG;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_arg_list); next != &cmd->_arg_list; next = xf_cmd_list_get_next(next)) {
-        cmd_arg_t* it = GET_PARENT_ADDR(next, cmd_arg_t, _node);
+    for (i = 0; i < cmd->_arg_count; ++i) {
+        cmd_arg_t* it = cmd->_args[i];
         bool should_append_help = true;
         const char* user_error = NULL;
         int parse_ret = XF_OPTION_OK;
+
+        if (it == NULL) {
+            continue;
+        }
 
         xf_shell_parser_sync_arg_runtime(it);
 
         if (positional_index < positional_count) {
             parse_ret = xf_opt_parse_value(&it->_opt, positional_values[positional_index]);
             if (parse_ret != XF_OPTION_OK) {
-                print_arg_error(it, NULL, true, &out);
+                print_arg_error(it, NULL, XF_SHELL_PARSER_HELP_ENABLE, &out);
                 return XF_CMD_NO_INVALID_ARG;
             }
             it->_opt.provided = 1U;
             positional_index++;
         } else if (it->require) {
-            print_arg_error(it, "required argument is missing", true, &out);
+            print_arg_error(it, "required argument is missing", XF_SHELL_PARSER_HELP_ENABLE, &out);
             return XF_CMD_NO_INVALID_ARG;
         }
 
@@ -255,7 +215,7 @@ int xf_shell_parser_run(xf_shell_cmd_t* cmd, int argc, const char** argv, xf_she
     }
 
     if (positional_index < positional_count) {
-        print_unknown_arg_error(cmd, positional_values[positional_index], true, &out);
+        print_unknown_arg_error(cmd, positional_values[positional_index], XF_SHELL_PARSER_HELP_ENABLE, &out);
         return XF_CMD_NO_INVALID_ARG;
     }
 
@@ -263,112 +223,35 @@ int xf_shell_parser_run(xf_shell_cmd_t* cmd, int argc, const char** argv, xf_she
 }
 
 int xf_shell_parser_get_int(const xf_cmd_args_t* cmd, const char* long_opt, int32_t* value) {
-    cmd_item_t* item = (cmd_item_t*)cmd;
-    cmd_opt_t* opt;
-    cmd_arg_t* arg;
-
-    if (item == NULL || value == NULL || long_opt == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-
-    opt = find_opt_by_name(item, long_opt);
-    if (opt != NULL) {
-        *value = opt->_opt.integer;
-        return XF_CMD_OK;
-    }
-
-    arg = find_arg_by_name(item, long_opt);
-    if (arg != NULL) {
-        *value = arg->_opt.integer;
-        return XF_CMD_OK;
-    }
-
-    return XF_CMD_NOT_SUPPORTED;
+    return parser_get_value(cmd, long_opt, value, XF_OPTION_TYPE_INT);
 }
 
 int xf_shell_parser_get_bool(const xf_cmd_args_t* cmd, const char* long_opt, bool* value) {
-    cmd_item_t* item = (cmd_item_t*)cmd;
-    cmd_opt_t* opt;
-    cmd_arg_t* arg;
-
-    if (item == NULL || value == NULL || long_opt == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-
-    opt = find_opt_by_name(item, long_opt);
-    if (opt != NULL) {
-        *value = opt->_opt.boolean;
-        return XF_CMD_OK;
-    }
-
-    arg = find_arg_by_name(item, long_opt);
-    if (arg != NULL) {
-        *value = arg->_opt.boolean;
-        return XF_CMD_OK;
-    }
-
-    return XF_CMD_NOT_SUPPORTED;
+    return parser_get_value(cmd, long_opt, value, XF_OPTION_TYPE_BOOL);
 }
 
 int xf_shell_parser_get_float(const xf_cmd_args_t* cmd, const char* long_opt, float* value) {
-    cmd_item_t* item = (cmd_item_t*)cmd;
-    cmd_opt_t* opt;
-    cmd_arg_t* arg;
-
-    if (item == NULL || value == NULL || long_opt == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-
-    opt = find_opt_by_name(item, long_opt);
-    if (opt != NULL) {
-        *value = opt->_opt.floating;
-        return XF_CMD_OK;
-    }
-
-    arg = find_arg_by_name(item, long_opt);
-    if (arg != NULL) {
-        *value = arg->_opt.floating;
-        return XF_CMD_OK;
-    }
-
-    return XF_CMD_NOT_SUPPORTED;
+    return parser_get_value(cmd, long_opt, value, XF_OPTION_TYPE_FLOAT);
 }
 
 int xf_shell_parser_get_string(const xf_cmd_args_t* cmd, const char* long_opt, const char** value) {
-    cmd_item_t* item = (cmd_item_t*)cmd;
-    cmd_opt_t* opt;
-    cmd_arg_t* arg;
-
-    if (item == NULL || value == NULL || long_opt == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-
-    opt = find_opt_by_name(item, long_opt);
-    if (opt != NULL) {
-        *value = opt->_opt.string;
-        return XF_CMD_OK;
-    }
-
-    arg = find_arg_by_name(item, long_opt);
-    if (arg != NULL) {
-        *value = arg->_opt.string;
-        return XF_CMD_OK;
-    }
-
-    return XF_CMD_NOT_SUPPORTED;
+    return parser_get_value(cmd, long_opt, value, XF_OPTION_TYPE_STRING);
 }
 
 /* ==================== [Static Functions] ================================== */
 
 static cmd_opt_t* find_opt_by_name(cmd_item_t* cmd, const char* name) {
-    xf_cmd_list_t* next;
+    uint16_t i;
 
     if (cmd == NULL || name == NULL) {
         return NULL;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list; next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t* it = GET_PARENT_ADDR(next, cmd_opt_t, _node);
+    for (i = 0; i < cmd->_opt_count; ++i) {
+        cmd_opt_t* it = cmd->_opts[i];
+        if (it == NULL) {
+            continue;
+        }
         if (it->long_opt != NULL && strcmp(name, it->long_opt) == 0) {
             return it;
         }
@@ -378,14 +261,17 @@ static cmd_opt_t* find_opt_by_name(cmd_item_t* cmd, const char* name) {
 }
 
 static cmd_opt_t* find_opt_by_short(cmd_item_t* cmd, char short_opt) {
-    xf_cmd_list_t* next;
+    uint16_t i;
 
     if (cmd == NULL || short_opt == '\0') {
         return NULL;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list; next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t* it = GET_PARENT_ADDR(next, cmd_opt_t, _node);
+    for (i = 0; i < cmd->_opt_count; ++i) {
+        cmd_opt_t* it = cmd->_opts[i];
+        if (it == NULL) {
+            continue;
+        }
         if (it->short_opt == short_opt) {
             return it;
         }
@@ -395,14 +281,17 @@ static cmd_opt_t* find_opt_by_short(cmd_item_t* cmd, char short_opt) {
 }
 
 static cmd_opt_t* find_opt_by_long_name(cmd_item_t* cmd, const char* name, size_t len) {
-    xf_cmd_list_t* next;
+    uint16_t i;
 
     if (cmd == NULL || name == NULL || len == 0U) {
         return NULL;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list; next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t* it = GET_PARENT_ADDR(next, cmd_opt_t, _node);
+    for (i = 0; i < cmd->_opt_count; ++i) {
+        cmd_opt_t* it = cmd->_opts[i];
+        if (it == NULL) {
+            continue;
+        }
         if (it->long_opt == NULL) {
             continue;
         }
@@ -415,20 +304,123 @@ static cmd_opt_t* find_opt_by_long_name(cmd_item_t* cmd, const char* name, size_
 }
 
 static cmd_arg_t* find_arg_by_name(cmd_item_t* cmd, const char* name) {
-    xf_cmd_list_t* next;
+    uint16_t i;
 
     if (cmd == NULL || name == NULL) {
         return NULL;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_arg_list); next != &cmd->_arg_list; next = xf_cmd_list_get_next(next)) {
-        cmd_arg_t* it = GET_PARENT_ADDR(next, cmd_arg_t, _node);
+    for (i = 0; i < cmd->_arg_count; ++i) {
+        cmd_arg_t* it = cmd->_args[i];
+        if (it == NULL) {
+            continue;
+        }
         if (it->name != NULL && strcmp(it->name, name) == 0) {
             return it;
         }
     }
 
     return NULL;
+}
+
+static xf_options_t* find_runtime_value_by_name(cmd_item_t* cmd, const char* name) {
+    cmd_opt_t* opt;
+    cmd_arg_t* arg;
+
+    if (cmd == NULL || name == NULL) {
+        return NULL;
+    }
+
+    opt = find_opt_by_name(cmd, name);
+    if (opt != NULL) {
+        return &opt->_opt;
+    }
+
+    arg = find_arg_by_name(cmd, name);
+    if (arg != NULL) {
+        return &arg->_opt;
+    }
+
+    return NULL;
+}
+
+static XF_SHELL_PARSER_NOINLINE void sync_runtime_value(xf_options_t* runtime,
+                                                        xf_opt_type_t type,
+                                                        bool require,
+                                                        bool has_default,
+                                                        int32_t default_integer,
+                                                        bool default_boolean,
+                                                        float default_floating,
+                                                        const char* default_string) {
+    if (runtime == NULL) {
+        return;
+    }
+
+    runtime->require = require ? 1U : 0U;
+    runtime->has_default = has_default ? 1U : 0U;
+    runtime->provided = 0U;
+    runtime->type = type;
+
+    if (!has_default) {
+        default_integer = 0;
+        default_boolean = false;
+        default_floating = 0.0f;
+        default_string = NULL;
+    }
+
+    switch (type) {
+        case XF_OPTION_TYPE_BOOL:
+            runtime->boolean = default_boolean;
+            break;
+        case XF_OPTION_TYPE_INT:
+            runtime->integer = default_integer;
+            break;
+        case XF_OPTION_TYPE_STRING:
+            runtime->string = default_string;
+            break;
+        case XF_OPTION_TYPE_FLOAT:
+            runtime->floating = default_floating;
+            break;
+        default:
+            runtime->integer = 0;
+            break;
+    }
+}
+
+static XF_SHELL_PARSER_NOINLINE int parser_get_value(const xf_cmd_args_t* cmd,
+                                                     const char* long_opt,
+                                                     void* value,
+                                                     xf_opt_type_t type) {
+    xf_options_t* runtime;
+    cmd_item_t* item = (cmd_item_t*)cmd;
+
+    if (item == NULL || value == NULL || long_opt == NULL) {
+        return XF_CMD_NO_INVALID_ARG;
+    }
+
+    runtime = find_runtime_value_by_name(item, long_opt);
+    if (runtime == NULL) {
+        return XF_CMD_NOT_SUPPORTED;
+    }
+
+    switch (type) {
+        case XF_OPTION_TYPE_BOOL:
+            *(bool*)value = runtime->boolean;
+            break;
+        case XF_OPTION_TYPE_INT:
+            *(int32_t*)value = runtime->integer;
+            break;
+        case XF_OPTION_TYPE_STRING:
+            *(const char**)value = runtime->string;
+            break;
+        case XF_OPTION_TYPE_FLOAT:
+            *(float*)value = runtime->floating;
+            break;
+        default:
+            return XF_CMD_NO_INVALID_ARG;
+    }
+
+    return XF_CMD_OK;
 }
 
 static int collect_positional_values(cmd_item_t* cmd, int argc, const char** argv, const char** values, int max_values) {
@@ -500,12 +492,18 @@ static int collect_positional_values(cmd_item_t* cmd, int argc, const char** arg
 }
 
 static bool is_help_token(const char* arg) {
+#if XF_SHELL_PARSER_HELP_ENABLE
     if (arg == NULL) {
         return false;
     }
     return (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0);
+#else
+    (void)arg;
+    return false;
+#endif
 }
 
+#if XF_SHELL_PARSER_HELP_ENABLE
 static cmd_opt_t* find_help_target_option(cmd_item_t* cmd, int argc, const char** argv, int help_idx) {
     int i;
 
@@ -570,6 +568,7 @@ static bool handle_builtin_help(cmd_item_t* cmd, int argc, const char** argv, co
 
     return false;
 }
+#endif
 
 static bool validate_known_options(cmd_item_t* cmd, int argc, const char** argv, const char** bad_token) {
     int i;
@@ -587,7 +586,7 @@ static bool validate_known_options(cmd_item_t* cmd, int argc, const char** argv,
         if (strcmp(arg, "--") == 0) {
             break;
         }
-        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+        if (is_help_token(arg)) {
             continue;
         }
 
@@ -629,6 +628,14 @@ static bool validate_known_options(cmd_item_t* cmd, int argc, const char** argv,
     return true;
 }
 
+static void out_puts(const parser_output_t* out, const char* s) {
+    if (out == NULL || out->puts_fn == NULL || s == NULL) {
+        return;
+    }
+    out->puts_fn(out->puts_ctx, s);
+}
+
+#if XF_SHELL_PARSER_HELP_ENABLE
 static const char* opt_expected_desc(xf_opt_type_t type) {
     switch (type) {
         case XF_OPTION_TYPE_BOOL:
@@ -642,13 +649,6 @@ static const char* opt_expected_desc(xf_opt_type_t type) {
         default:
             return "value";
     }
-}
-
-static void out_puts(const parser_output_t* out, const char* s) {
-    if (out == NULL || out->puts_fn == NULL || s == NULL) {
-        return;
-    }
-    out->puts_fn(out->puts_ctx, s);
 }
 
 static void print_option_usage(cmd_opt_t* opt, const parser_output_t* out) {
@@ -717,27 +717,33 @@ static void print_command_help(cmd_item_t* cmd, const parser_output_t* out) {
 }
 
 static void print_command_args_usage(cmd_item_t* cmd, const parser_output_t* out) {
-    xf_cmd_list_t* next;
+    uint16_t i;
 
     if (cmd == NULL) {
         return;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_arg_list); next != &cmd->_arg_list; next = xf_cmd_list_get_next(next)) {
-        cmd_arg_t* arg = GET_PARENT_ADDR(next, cmd_arg_t, _node);
+    for (i = 0; i < cmd->_arg_count; ++i) {
+        cmd_arg_t* arg = cmd->_args[i];
+        if (arg == NULL) {
+            continue;
+        }
         print_arg_usage(arg, out);
     }
 }
 
 static void print_command_options_usage(cmd_item_t* cmd, const parser_output_t* out) {
-    xf_cmd_list_t* next;
+    uint16_t i;
 
     if (cmd == NULL) {
         return;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list; next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t* opt = GET_PARENT_ADDR(next, cmd_opt_t, _node);
+    for (i = 0; i < cmd->_opt_count; ++i) {
+        cmd_opt_t* opt = cmd->_opts[i];
+        if (opt == NULL) {
+            continue;
+        }
         print_option_usage(opt, out);
     }
 }
@@ -775,6 +781,35 @@ static void print_arg_error(cmd_arg_t* arg, const char* message, bool append_hel
         print_arg_usage(arg, out);
     }
 }
+#else
+static void print_option_error(cmd_opt_t* opt, const char* message, bool append_help, const parser_output_t* out) {
+    char buffer[256];
+    const char* name = (opt != NULL && opt->long_opt != NULL && opt->long_opt[0] != '\0') ? opt->long_opt : "(unknown)";
+    const char* msg = message;
+
+    (void)append_help;
+    if (msg == NULL || msg[0] == '\0') {
+        snprintf(buffer, sizeof(buffer), "invalid option: --%s" XF_SHELL_NEWLINE, name);
+    } else {
+        snprintf(buffer, sizeof(buffer), "invalid option --%s: %s" XF_SHELL_NEWLINE, name, msg);
+    }
+    out_puts(out, buffer);
+}
+
+static void print_arg_error(cmd_arg_t* arg, const char* message, bool append_help, const parser_output_t* out) {
+    char buffer[256];
+    const char* name = (arg != NULL && arg->name != NULL && arg->name[0] != '\0') ? arg->name : "(unknown)";
+    const char* msg = message;
+
+    (void)append_help;
+    if (msg == NULL || msg[0] == '\0') {
+        snprintf(buffer, sizeof(buffer), "invalid argument: <%s>" XF_SHELL_NEWLINE, name);
+    } else {
+        snprintf(buffer, sizeof(buffer), "invalid argument <%s>: %s" XF_SHELL_NEWLINE, name, msg);
+    }
+    out_puts(out, buffer);
+}
+#endif
 
 static void print_unknown_option_error(cmd_item_t* cmd, const char* token, bool append_help, const parser_output_t* out) {
     char buffer[256];
@@ -782,9 +817,14 @@ static void print_unknown_option_error(cmd_item_t* cmd, const char* token, bool 
     snprintf(buffer, sizeof(buffer), "unknown option: %s" XF_SHELL_NEWLINE, token ? token : "(null)");
     out_puts(out, buffer);
 
+#if XF_SHELL_PARSER_HELP_ENABLE
     if (append_help) {
         print_command_help(cmd, out);
     }
+#else
+    (void)cmd;
+    (void)append_help;
+#endif
 }
 
 static void print_unknown_arg_error(cmd_item_t* cmd, const char* token, bool append_help, const parser_output_t* out) {
@@ -793,7 +833,12 @@ static void print_unknown_arg_error(cmd_item_t* cmd, const char* token, bool app
     snprintf(buffer, sizeof(buffer), "unexpected argument: %s" XF_SHELL_NEWLINE, token ? token : "(null)");
     out_puts(out, buffer);
 
+#if XF_SHELL_PARSER_HELP_ENABLE
     if (append_help) {
         print_command_help(cmd, out);
     }
+#else
+    (void)cmd;
+    (void)append_help;
+#endif
 }

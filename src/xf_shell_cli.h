@@ -2,72 +2,7 @@
 #define __XF_SHELL_CLI_H__
 
 #include <stdbool.h>
-
-#ifndef XF_CLI_MAX_LINE
-/**
- * Maximum number of bytes to accept in a single line
- */
-#define XF_CLI_MAX_LINE 120
-#endif
-
-#ifndef XF_CLI_HISTORY_LEN
-/**
- * Maximum number of bytes to retain of history data
- * Define this to 0 to remove history support
- */
-#define XF_CLI_HISTORY_LEN 1000
-#endif
-
-#ifndef XF_CLI_MAX_ARGC
-/**
- * What is the maximum number of arguments we reserve space for
- */
-#define XF_CLI_MAX_ARGC 16
-#endif
-
-#ifndef XF_CLI_MAX_PROMPT_LEN
-/**
- * Maximum number of bytes in the prompt
- */
-#define XF_CLI_MAX_PROMPT_LEN 15
-#endif
-
-#ifndef XF_CLI_SERIAL_XLATE
-/**
- * Translate CR -> NL on input and output CR NL on output. This allows
- * "natural" processing when using a serial terminal.
- */
-#define XF_CLI_SERIAL_XLATE 1
-#endif
-
-#ifndef XF_CLI_COLORFUL
-/**
- * Enable ANSI colorful output for prompt/command.
- * 0: disabled, 1: enabled
- */
-#define XF_CLI_COLORFUL 1
-#endif
-
-#ifndef XF_CLI_PROMPT_COLOR
-/**
- * Prompt color sequence, default red.
- */
-#define XF_CLI_PROMPT_COLOR "\x1b[31m"
-#endif
-
-#ifndef XF_CLI_COMMAND_COLOR
-/**
- * Command input color sequence, default green.
- */
-#define XF_CLI_COMMAND_COLOR "\x1b[32m"
-#endif
-
-#ifndef XF_CLI_COLOR_RESET
-/**
- * ANSI reset color sequence.
- */
-#define XF_CLI_COLOR_RESET "\x1b[0m"
-#endif
+#include "xf_shell_config_internal.h"
 
 /**
  * This is the structure which defines the current state of the CLI

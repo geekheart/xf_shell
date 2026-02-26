@@ -12,15 +12,11 @@
 /* ==================== [Includes] ========================================== */
 
 #include "xf_shell.h"
-#include "xf_shell_cmd_list.h"
 #include "xf_shell_cli.h"
 #include "xf_shell_completion.h"
 #include "xf_shell_parser.h"
-#include "xf_shell_options.h"
-#include <string.h>
 #include <stdio.h>
-
-/* ==================== [Defines] =========================================== */
+#include <string.h>
 
 /* ==================== [Typedefs] ========================================== */
 
@@ -31,37 +27,48 @@ typedef xf_arg_t cmd_arg_t;
 /* ==================== [Static Prototypes] ================================= */
 
 static void xf_shell_register_help_cmd(void);
+#if XF_CLI_HISTORY_LEN
 static void xf_shell_register_history_cmd(void);
-static void ensure_cmd_links_inited(cmd_item_t *cmd);
-static void ensure_opt_links_inited(cmd_opt_t *opt);
-static void ensure_arg_links_inited(cmd_arg_t *arg);
-static bool is_list_node_detached(const xf_cmd_list_t *node);
+#endif
+static int append_command_to_registry(cmd_item_t *cmd);
+static bool is_valid_command_descriptor(const cmd_item_t *cmd);
+static int find_command_index_by_name(const char *name);
 static cmd_item_t *find_command_by_name(const char *name);
-static cmd_opt_t *find_opt_by_name(cmd_item_t *cmd, const char *name);
-static cmd_arg_t *find_arg_by_name(cmd_item_t *cmd, const char *name);
-static void detach_command_opts(cmd_item_t *cmd);
-static void detach_command_args(cmd_item_t *cmd);
+static int import_static_command_table(void);
+static bool is_whitespace_char(char ch);
+static bool are_completion_candidates_valid(const char *const *candidates, uint16_t count);
 static int help_command(const xf_cmd_args_t *cmd);
 static void cli_puts_adapter(void *ctx, const char *s);
 static void cli_putchar(struct xf_cli *cli, char ch, bool is_last);
 static void cli_puts(struct xf_cli *cli, const char *s);
+#if XF_CLI_HISTORY_LEN
 static int history_command(const xf_cmd_args_t *cmd);
+#endif
 
 /* ==================== [Static Variables] ================================== */
 
-static xf_cmd_list_t s_cmd_list = {&s_cmd_list, &s_cmd_list};
+static cmd_item_t *s_cmd_table[XF_SHELL_MAX_COMMANDS];
+static uint16_t s_cmd_count = 0;
 static struct xf_cli s_cli;
+static cmd_item_t *const *s_user_cmd_table = NULL;
+static uint16_t s_user_cmd_count = 0;
+#if XF_SHELL_COMPLETION_ENABLE
 static char s_matches[XF_SHELL_MAX_MATCHES][XF_CLI_MAX_LINE];
-
-/* ==================== [Macros] ============================================ */
+#endif
 
 /* ==================== [Global Functions] ================================== */
 
 void xf_shell_cmd_init(const char *prompt, xf_putc_t putc, void *user_data)
 {
     xf_cli_init(&s_cli, prompt, putc, user_data);
+
+    s_cmd_count = 0;
     xf_shell_register_help_cmd();
+#if XF_CLI_HISTORY_LEN
     xf_shell_register_history_cmd();
+#endif
+    (void)import_static_command_table();
+
     xf_cli_prompt(&s_cli);
 }
 
@@ -71,15 +78,21 @@ void xf_shell_cmd_handle(xf_getc_t getc)
     char **cli_argv;
     char ch = getc();
 
-    if (ch == '\t' && xf_shell_completion_handle_tab(&s_cli, &s_cmd_list,
-            s_matches, XF_SHELL_MAX_MATCHES)) {
+    if (ch == '\t') {
+#if XF_SHELL_COMPLETION_ENABLE
+        if (xf_shell_completion_handle_tab(&s_cli, s_cmd_table, (int)s_cmd_count,
+                                           s_matches, XF_SHELL_MAX_MATCHES)) {
+            return;
+        }
+#else
         return;
+#endif
     }
 
     if (xf_cli_insert_char(&s_cli, ch)) {
         cli_argc = xf_cli_argc(&s_cli, &cli_argv);
         if (xf_shell_cmd_run(cli_argc, (const char **)cli_argv)
-                == XF_CMD_NOT_SUPPORTED && cli_argv[0] != NULL) {
+            == XF_CMD_NOT_SUPPORTED && cli_argv[0] != NULL) {
             cli_puts(&s_cli, "command not found: ");
             cli_puts(&s_cli, cli_argv[0]);
             cli_puts(&s_cli, XF_SHELL_NEWLINE);
@@ -89,155 +102,41 @@ void xf_shell_cmd_handle(xf_getc_t getc)
     }
 }
 
-int xf_shell_cmd_register(xf_shell_cmd_t *cmd)
+int xf_shell_cmd_set_table(xf_shell_cmd_t *const *cmd_table, uint16_t cmd_count)
 {
-    if (cmd == NULL || cmd->command == NULL || cmd->func == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-    if (strchr(cmd->command, ' ') != NULL) {
+    if (cmd_count > 0U && cmd_table == NULL) {
         return XF_CMD_NO_INVALID_ARG;
     }
 
-    ensure_cmd_links_inited(cmd);
-
-    if (!is_list_node_detached(&cmd->_node)) {
-        return XF_CMD_INITED;
-    }
-
-    if (find_command_by_name(cmd->command) != NULL) {
-        return XF_CMD_INITED;
-    }
-
-    xf_cmd_list_attach(&s_cmd_list, &cmd->_node);
+    s_user_cmd_table = cmd_table;
+    s_user_cmd_count = cmd_count;
     return XF_CMD_OK;
 }
 
-int xf_shell_cmd_unregister(xf_shell_cmd_t *cmd)
+
+int xf_shell_cmd_set_opt_candidates(xf_opt_arg_t *opt,
+                                    const char *const *candidates,
+                                    uint16_t count)
 {
-    if (cmd == NULL) {
+    if (opt == NULL || !are_completion_candidates_valid(candidates, count)) {
         return XF_CMD_NO_INVALID_ARG;
     }
 
-    ensure_cmd_links_inited(cmd);
-
-    if (is_list_node_detached(&cmd->_node)) {
-        return XF_CMD_NOT_SUPPORTED;
-    }
-
-    detach_command_opts(cmd);
-    detach_command_args(cmd);
-    xf_cmd_list_detach(&cmd->_node);
-
+    opt->completion.items = candidates;
+    opt->completion.count = count;
     return XF_CMD_OK;
 }
 
-int xf_shell_cmd_set_opt(xf_shell_cmd_t *cmd, xf_opt_arg_t *arg)
+int xf_shell_cmd_set_arg_candidates(xf_arg_t *arg,
+                                    const char *const *candidates,
+                                    uint16_t count)
 {
-    if (cmd == NULL || arg == NULL || arg->long_opt == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-    if (arg->require && arg->has_default) {
+    if (arg == NULL || !are_completion_candidates_valid(candidates, count)) {
         return XF_CMD_NO_INVALID_ARG;
     }
 
-    ensure_cmd_links_inited(cmd);
-    if (is_list_node_detached(&cmd->_node)) {
-        return XF_CMD_NOT_SUPPORTED;
-    }
-
-    if (find_opt_by_name(cmd, arg->long_opt) != NULL) {
-        return XF_CMD_INITED;
-    }
-    if (find_arg_by_name(cmd, arg->long_opt) != NULL) {
-        return XF_CMD_INITED;
-    }
-
-    ensure_opt_links_inited(arg);
-    if (!is_list_node_detached(&arg->_node)) {
-        return XF_CMD_INITED;
-    }
-
-    xf_shell_parser_sync_opt_runtime(arg);
-    arg->_owner = cmd;
-
-    xf_cmd_list_attach(&cmd->_opt_list, &arg->_node);
-    return XF_CMD_OK;
-}
-
-int xf_shell_cmd_unset_opt(xf_shell_cmd_t *cmd, xf_opt_arg_t *arg)
-{
-    if (cmd == NULL || arg == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-
-    ensure_cmd_links_inited(cmd);
-    ensure_opt_links_inited(arg);
-
-    if (is_list_node_detached(&arg->_node)) {
-        return XF_CMD_NOT_SUPPORTED;
-    }
-
-    if (arg->_owner != cmd) {
-        return XF_CMD_NOT_SUPPORTED;
-    }
-
-    xf_cmd_list_detach(&arg->_node);
-    arg->_owner = NULL;
-    return XF_CMD_OK;
-}
-
-int xf_shell_cmd_set_arg(xf_shell_cmd_t *cmd, xf_arg_t *arg)
-{
-    if (cmd == NULL || arg == NULL || arg->name == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-    if (arg->require && arg->has_default) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-
-    ensure_cmd_links_inited(cmd);
-    if (is_list_node_detached(&cmd->_node)) {
-        return XF_CMD_NOT_SUPPORTED;
-    }
-
-    if (find_arg_by_name(cmd, arg->name) != NULL) {
-        return XF_CMD_INITED;
-    }
-    if (find_opt_by_name(cmd, arg->name) != NULL) {
-        return XF_CMD_INITED;
-    }
-
-    ensure_arg_links_inited(arg);
-    if (!is_list_node_detached(&arg->_node)) {
-        return XF_CMD_INITED;
-    }
-
-    xf_shell_parser_sync_arg_runtime(arg);
-    arg->_owner = cmd;
-
-    xf_cmd_list_attach(&cmd->_arg_list, &arg->_node);
-    return XF_CMD_OK;
-}
-
-int xf_shell_cmd_unset_arg(xf_shell_cmd_t *cmd, xf_arg_t *arg)
-{
-    if (cmd == NULL || arg == NULL) {
-        return XF_CMD_NO_INVALID_ARG;
-    }
-
-    ensure_cmd_links_inited(cmd);
-    ensure_arg_links_inited(arg);
-
-    if (is_list_node_detached(&arg->_node)) {
-        return XF_CMD_NOT_SUPPORTED;
-    }
-
-    if (arg->_owner != cmd) {
-        return XF_CMD_NOT_SUPPORTED;
-    }
-
-    xf_cmd_list_detach(&arg->_node);
-    arg->_owner = NULL;
+    arg->completion.items = candidates;
+    arg->completion.count = count;
     return XF_CMD_OK;
 }
 
@@ -258,25 +157,25 @@ int xf_shell_cmd_run(int argc, const char **argv)
 }
 
 int xf_shell_cmd_get_int(const xf_cmd_args_t *cmd, const char *long_opt,
-                           int32_t *value)
+                         int32_t *value)
 {
     return xf_shell_parser_get_int(cmd, long_opt, value);
 }
 
 int xf_shell_cmd_get_bool(const xf_cmd_args_t *cmd, const char *long_opt,
-                            bool *value)
+                          bool *value)
 {
     return xf_shell_parser_get_bool(cmd, long_opt, value);
 }
 
 int xf_shell_cmd_get_float(const xf_cmd_args_t *cmd, const char *long_opt,
-                             float *value)
+                           float *value)
 {
     return xf_shell_parser_get_float(cmd, long_opt, value);
 }
 
 int xf_shell_cmd_get_string(const xf_cmd_args_t *cmd,
-                              const char *long_opt, const char **value)
+                            const char *long_opt, const char **value)
 {
     return xf_shell_parser_get_string(cmd, long_opt, value);
 }
@@ -291,9 +190,10 @@ static void xf_shell_register_help_cmd(void)
         .func = help_command,
     };
 
-    (void)xf_shell_cmd_register(&s_help_cmd);
+    (void)append_command_to_registry(&s_help_cmd);
 }
 
+#if XF_CLI_HISTORY_LEN
 static void xf_shell_register_history_cmd(void)
 {
     static xf_shell_cmd_t s_history_cmd = {
@@ -302,166 +202,150 @@ static void xf_shell_register_history_cmd(void)
         .func = history_command,
     };
 
-    (void)xf_shell_cmd_register(&s_history_cmd);
+    (void)append_command_to_registry(&s_history_cmd);
+}
+#endif
+
+static int import_static_command_table(void)
+{
+    uint16_t i;
+
+    if (s_user_cmd_count == 0U) {
+        return XF_CMD_OK;
+    }
+
+    if (s_user_cmd_table == NULL) {
+        return XF_CMD_NO_INVALID_ARG;
+    }
+
+    for (i = 0; i < s_user_cmd_count; ++i) {
+        int ret = append_command_to_registry(s_user_cmd_table[i]);
+        if (ret != XF_CMD_OK && ret != XF_CMD_INITED) {
+            return ret;
+        }
+    }
+
+    return XF_CMD_OK;
 }
 
-static void ensure_cmd_links_inited(cmd_item_t *cmd)
+static int append_command_to_registry(cmd_item_t *cmd)
 {
-    if (cmd == NULL) {
-        return;
+    if (!is_valid_command_descriptor(cmd)) {
+        return XF_CMD_NO_INVALID_ARG;
     }
 
-    if (cmd->_node.next == NULL || cmd->_node.prev == NULL) {
-        xf_cmd_list_init(&cmd->_node);
+    if (find_command_by_name(cmd->command) != NULL) {
+        return XF_CMD_INITED;
     }
 
-    if (cmd->_opt_list.next == NULL || cmd->_opt_list.prev == NULL) {
-        xf_cmd_list_init(&cmd->_opt_list);
+    if (s_cmd_count >= XF_SHELL_MAX_COMMANDS) {
+        return XF_CMD_NO_MEM;
     }
 
-    if (cmd->_arg_list.next == NULL || cmd->_arg_list.prev == NULL) {
-        xf_cmd_list_init(&cmd->_arg_list);
-    }
+    s_cmd_table[s_cmd_count++] = cmd;
+    return XF_CMD_OK;
 }
 
-static void ensure_opt_links_inited(cmd_opt_t *opt)
+static bool is_valid_command_descriptor(const cmd_item_t *cmd)
 {
-    if (opt == NULL) {
-        return;
+    if (cmd == NULL || cmd->command == NULL || cmd->func == NULL) {
+        return false;
     }
-
-    if (opt->_node.next == NULL || opt->_node.prev == NULL) {
-        xf_cmd_list_init(&opt->_node);
+    if (strchr(cmd->command, ' ') != NULL) {
+        return false;
     }
+    if (cmd->_opt_count > 0U && cmd->_opts == NULL) {
+        return false;
+    }
+    if (cmd->_arg_count > 0U && cmd->_args == NULL) {
+        return false;
+    }
+    return true;
 }
 
-static void ensure_arg_links_inited(cmd_arg_t *arg)
+static int find_command_index_by_name(const char *name)
 {
-    if (arg == NULL) {
-        return;
+    uint16_t i;
+
+    if (name == NULL) {
+        return -1;
     }
 
-    if (arg->_node.next == NULL || arg->_node.prev == NULL) {
-        xf_cmd_list_init(&arg->_node);
+    for (i = 0; i < s_cmd_count; ++i) {
+        cmd_item_t *it = s_cmd_table[i];
+        if (it != NULL && strcmp(name, it->command) == 0) {
+            return (int)i;
+        }
     }
-}
 
-static bool is_list_node_detached(const xf_cmd_list_t *node)
-{
-    return (node != NULL && node->next == node && node->prev == node);
+    return -1;
 }
 
 static cmd_item_t *find_command_by_name(const char *name)
 {
-    xf_cmd_list_t *next;
-
-    if (name == NULL) {
+    int index = find_command_index_by_name(name);
+    if (index < 0) {
         return NULL;
     }
 
-    for (next = xf_cmd_list_get_next(&s_cmd_list); next != &s_cmd_list;
-            next = xf_cmd_list_get_next(next)) {
-        cmd_item_t *it = GET_PARENT_ADDR(next, cmd_item_t, _node);
-        if (strcmp(name, it->command) == 0) {
-            return it;
-        }
-    }
-    return NULL;
+    return s_cmd_table[index];
 }
 
-static cmd_opt_t *find_opt_by_name(cmd_item_t *cmd, const char *name)
+static bool is_whitespace_char(char ch)
 {
-    xf_cmd_list_t *next;
-
-    if (cmd == NULL || name == NULL) {
-        return NULL;
-    }
-
-    for (next = xf_cmd_list_get_next(&cmd->_opt_list); next != &cmd->_opt_list;
-            next = xf_cmd_list_get_next(next)) {
-        cmd_opt_t *it = GET_PARENT_ADDR(next, cmd_opt_t, _node);
-        if (it->long_opt != NULL && strcmp(name, it->long_opt) == 0) {
-            return it;
-        }
-    }
-
-    return NULL;
+    return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r');
 }
 
-static cmd_arg_t *find_arg_by_name(cmd_item_t *cmd, const char *name)
+static bool are_completion_candidates_valid(const char *const *candidates, uint16_t count)
 {
-    xf_cmd_list_t *next;
+    uint16_t i;
 
-    if (cmd == NULL || name == NULL) {
-        return NULL;
+    if (count == 0U) {
+        return true;
+    }
+    if (candidates == NULL) {
+        return false;
     }
 
-    for (next = xf_cmd_list_get_next(&cmd->_arg_list); next != &cmd->_arg_list;
-            next = xf_cmd_list_get_next(next)) {
-        cmd_arg_t *it = GET_PARENT_ADDR(next, cmd_arg_t, _node);
-        if (it->name != NULL && strcmp(it->name, name) == 0) {
-            return it;
+    for (i = 0; i < count; ++i) {
+        const char *it = candidates[i];
+        if (it == NULL || it[0] == '\0') {
+            return false;
+        }
+        for (; *it != '\0'; ++it) {
+            if (is_whitespace_char(*it)) {
+                return false;
+            }
         }
     }
 
-    return NULL;
-}
-
-static void detach_command_opts(cmd_item_t *cmd)
-{
-    xf_cmd_list_t *next;
-
-    if (cmd == NULL) {
-        return;
-    }
-
-    next = xf_cmd_list_get_next(&cmd->_opt_list);
-    while (next != &cmd->_opt_list) {
-        cmd_opt_t *opt = GET_PARENT_ADDR(next, cmd_opt_t, _node);
-        next = xf_cmd_list_get_next(next);
-        xf_cmd_list_detach(&opt->_node);
-        opt->_owner = NULL;
-    }
-}
-
-static void detach_command_args(cmd_item_t *cmd)
-{
-    xf_cmd_list_t *next;
-
-    if (cmd == NULL) {
-        return;
-    }
-
-    next = xf_cmd_list_get_next(&cmd->_arg_list);
-    while (next != &cmd->_arg_list) {
-        cmd_arg_t *arg = GET_PARENT_ADDR(next, cmd_arg_t, _node);
-        next = xf_cmd_list_get_next(next);
-        xf_cmd_list_detach(&arg->_node);
-        arg->_owner = NULL;
-    }
+    return true;
 }
 
 static int help_command(const xf_cmd_args_t *cmd)
 {
-    xf_cmd_list_t *next;
+    uint16_t i;
 
     (void)cmd;
     cli_puts(&s_cli, ">>>>>>>>>>> help <<<<<<<<<<<<" XF_SHELL_NEWLINE);
-    for (next = xf_cmd_list_get_next(&s_cmd_list); next != &s_cmd_list;
-            next = xf_cmd_list_get_next(next)) {
-        cmd_item_t *it = GET_PARENT_ADDR(next, cmd_item_t, _node);
-        if (it->help == NULL) {
+
+    for (i = 0; i < s_cmd_count; ++i) {
+        cmd_item_t *it = s_cmd_table[i];
+        if (it == NULL || it->help == NULL) {
             continue;
         }
+
         cli_puts(&s_cli, "\t");
         cli_puts(&s_cli, it->command);
         cli_puts(&s_cli, ":\t");
         cli_puts(&s_cli, it->help);
         cli_puts(&s_cli, XF_SHELL_NEWLINE);
     }
+
     return XF_CMD_OK;
 }
 
+#if XF_CLI_HISTORY_LEN
 static int history_command(const xf_cmd_args_t *cmd)
 {
     int i;
@@ -469,7 +353,6 @@ static int history_command(const xf_cmd_args_t *cmd)
     char buffer[32];
 
     (void)cmd;
-#if XF_CLI_HISTORY_LEN
     for (i = 0;; ++i) {
         line = xf_cli_get_history(&s_cli, i);
         if (line == NULL || line[0] == '\0') {
@@ -483,11 +366,9 @@ static int history_command(const xf_cmd_args_t *cmd)
     if (i == 0) {
         cli_puts(&s_cli, "history is empty" XF_SHELL_NEWLINE);
     }
-#else
-    cli_puts(&s_cli, "history is disabled (XF_CLI_HISTORY_LEN=0)" XF_SHELL_NEWLINE);
-#endif
     return XF_CMD_OK;
 }
+#endif
 
 static void cli_puts_adapter(void *ctx, const char *s)
 {
